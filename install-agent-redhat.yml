@@ -1,0 +1,186 @@
+---
+# Install the ServiceRadar agent on RHEL/Rocky/Alma/Fedora hosts from the
+# latest (or a pinned) Forgejo release at code.carverauto.dev.
+#
+# Optional extra vars:
+#   serviceradar_version         pin a release, e.g. "1.4.2" or "v1.4.2"
+#                                (default: latest published release)
+#   target_hosts                 host pattern (default: all — use the AWX
+#                                job template "limit" to target devices)
+#   serviceradar_validate_certs  set false only for TLS-intercepting proxies
+#
+# See README.md for artifact naming, enrollment, and AWX job template setup.
+- name: Install ServiceRadar agent (RHEL/Rocky/Alma/Fedora)
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    serviceradar_api_base: "https://code.carverauto.dev/api/v1/repos/carverauto/serviceradar"
+    serviceradar_validate_certs: true
+    serviceradar_service_name: serviceradar-agent
+    serviceradar_package_name: serviceradar-agent
+    # RPM assets use kernel architecture names; map aliases just in case.
+    serviceradar_rpm_arch_map:
+      x86_64: x86_64
+      aarch64: aarch64
+      arm64: aarch64
+
+  tasks:
+    - name: Verify this host is a RedHat-family system
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'RedHat'
+        fail_msg: >-
+          {{ inventory_hostname }} reports os_family
+          {{ ansible_facts['os_family'] }} — use install-agent-debian.yml
+          for apt-based hosts.
+
+    - name: Resolve release endpoint (latest or pinned version)
+      ansible.builtin.set_fact:
+        serviceradar_release_url: >-
+          {{ serviceradar_api_base }}/releases/{{
+            'tags/v' ~ (serviceradar_version | regex_replace('^v', ''))
+            if serviceradar_version is defined
+            else 'latest' }}
+
+    - name: Fetch release metadata from Forgejo
+      ansible.builtin.uri:
+        url: "{{ serviceradar_release_url }}"
+        return_content: true
+        validate_certs: "{{ serviceradar_validate_certs }}"
+      register: serviceradar_release
+      retries: 3
+      delay: 5
+      until: serviceradar_release.status == 200
+      check_mode: false
+
+    - name: Record target version and package architecture
+      ansible.builtin.set_fact:
+        serviceradar_target_version: >-
+          {{ serviceradar_release.json.tag_name | regex_replace('^v', '') }}
+        serviceradar_rpm_arch: >-
+          {{ serviceradar_rpm_arch_map[ansible_facts['architecture']]
+             | default(ansible_facts['architecture']) }}
+
+    # Observed asset naming (v1.4.2):
+    #   serviceradar-agent-1.4.2-1-1.4.2-1.x86_64.rpm
+    # The doubled version-release is a CI artifact-naming quirk; inside, the
+    # package is serviceradar-agent-<version>-<release>.<arch>. Anchoring on
+    # "serviceradar-agent-<version>" keeps serviceradar-agent-gateway-*.rpm
+    # from matching.
+    - name: Select the agent .rpm asset for this architecture
+      ansible.builtin.set_fact:
+        serviceradar_matched_assets: >-
+          {{ serviceradar_release.json.assets
+             | selectattr('name', 'match',
+                          '^serviceradar-agent-'
+                          ~ (serviceradar_target_version | regex_escape)
+                          ~ '.*\.' ~ serviceradar_rpm_arch ~ '\.rpm$')
+             | list }}
+
+    - name: Verify exactly one matching asset was published
+      ansible.builtin.assert:
+        that:
+          - serviceradar_matched_assets | length == 1
+        fail_msg: >-
+          Release {{ serviceradar_release.json.tag_name }} publishes no
+          serviceradar-agent .rpm for architecture
+          {{ serviceradar_rpm_arch }} (host arch
+          {{ ansible_facts['architecture'] }}). Agent assets available:
+          {{ serviceradar_release.json.assets | map(attribute='name')
+             | select('match', '^serviceradar-agent') | list | join(', ') }}
+
+    - name: Record selected asset
+      ansible.builtin.set_fact:
+        serviceradar_agent_asset: "{{ serviceradar_matched_assets[0] }}"
+
+    - name: Query installed serviceradar-agent version
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - --query
+          - --queryformat
+          - "%{VERSION}"
+          - "{{ serviceradar_package_name }}"
+      register: serviceradar_rpm_query
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Record installed version
+      ansible.builtin.set_fact:
+        serviceradar_installed_version: >-
+          {{ (serviceradar_rpm_query.stdout | trim)
+             if serviceradar_rpm_query.rc == 0
+             else '' }}
+
+    - name: Download and install serviceradar-agent {{ serviceradar_target_version }}
+      when: serviceradar_installed_version != serviceradar_target_version
+      block:
+        # As of v1.4.2 the release publishes no per-package checksums (see
+        # README.md); if a <asset>.sha256 sidecar appears in a future
+        # release it is picked up and enforced automatically.
+        - name: Look for a published sha256 checksum sidecar
+          ansible.builtin.set_fact:
+            serviceradar_checksum_assets: >-
+              {{ serviceradar_release.json.assets
+                 | selectattr('name', 'equalto',
+                              serviceradar_agent_asset.name ~ '.sha256')
+                 | list }}
+
+        - name: Download agent package to /tmp
+          ansible.builtin.get_url:
+            url: "{{ serviceradar_agent_asset.browser_download_url }}"
+            dest: "/tmp/{{ serviceradar_agent_asset.name }}"
+            mode: "0644"
+            validate_certs: "{{ serviceradar_validate_certs }}"
+            checksum: >-
+              {{ ('sha256:' ~ serviceradar_checksum_assets[0].browser_download_url)
+                 if serviceradar_checksum_assets | length > 0
+                 else omit }}
+          register: serviceradar_download
+          retries: 3
+          delay: 5
+          until: serviceradar_download is succeeded
+
+        # ansible.builtin.package dispatches to dnf/dnf5/yum as detected on
+        # the host; all of them accept a local .rpm path. The RPMs are not
+        # GPG-signed (see README.md) — local installs pass because
+        # localpkg_gpgcheck defaults to off; hosts that harden it must
+        # import a key or relax the setting.
+        - name: Install agent package via dnf/yum
+          ansible.builtin.package:
+            name: "/tmp/{{ serviceradar_agent_asset.name }}"
+            state: present
+
+        - name: Remove downloaded package file
+          ansible.builtin.file:
+            path: "/tmp/{{ serviceradar_agent_asset.name }}"
+            state: absent
+
+    - name: Ensure serviceradar-agent service is enabled and started
+      ansible.builtin.systemd_service:
+        name: "{{ serviceradar_service_name }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # The agent package has no gateway-URL/join-token config drop-in: the
+    # gateway address lives in /etc/serviceradar/agent.json (gateway_addr)
+    # and enrollment is performed by `serviceradar-cli enroll` with an
+    # onboarding token. See README.md ("Enrollment").
+    - name: Warn that enrollment variables are not applied by this playbook
+      ansible.builtin.debug:
+        msg: >-
+          serviceradar_gateway_url / serviceradar_join_token were provided
+          but are intentionally NOT templated by this playbook — enroll the
+          agent with `serviceradar-cli enroll` instead (see README.md).
+      when: serviceradar_gateway_url is defined or serviceradar_join_token is defined
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: >-
+          serviceradar-agent {{ serviceradar_target_version }} present on
+          {{ inventory_hostname }} ({{ ansible_facts['architecture'] }});
+          service {{ serviceradar_service_name }} enabled and started.

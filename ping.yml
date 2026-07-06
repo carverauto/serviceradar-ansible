@@ -1,0 +1,23 @@
+---
+# Trivial smoke playbook used to verify the AWX -> device launch path
+# (project sync, credentials, become, connectivity) before running the
+# real installer playbooks. Safe to run anywhere: read-only.
+- name: ServiceRadar AWX connectivity smoke test
+  hosts: "{{ target_hosts | default('all') }}"
+  become: false
+  gather_facts: true
+
+  tasks:
+    - name: Ping managed host
+      ansible.builtin.ping:
+
+    - name: Report host identity
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} answered as
+          {{ ansible_facts['hostname'] }}
+          (ip {{ ansible_facts['default_ipv4']['address']
+                 | default('no default ipv4') }},
+          {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }},
+          arch {{ ansible_facts['architecture'] }})
