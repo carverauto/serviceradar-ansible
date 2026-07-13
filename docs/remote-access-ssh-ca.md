@@ -118,9 +118,13 @@ exact `operator_target_id`, the exact committed `policy_digest`, and
 
 ## ServiceRadar-integrated execution
 
-Do not create surveys or prompt-on-launch fields for integrated templates.
-ServiceRadar must create immutable project/template/inventory/credential/host
-bindings and an exact non-empty AWX limit. Only root wrappers listed under
+Do not create surveys or prompt-on-launch inventory, SCM branch, job tags, or
+extra-variable fields for integrated templates. Enable only AWX's limit and
+credential prompts: ServiceRadar supplies the exact non-empty host limit, the
+reviewed base credential IDs, and one per-execution callback credential ID from
+its immutable authority snapshot. Human/browser input never supplies either
+prompt. ServiceRadar must create immutable project/template/inventory/
+credential/host bindings. Only root wrappers listed under
 `integrated_wrappers` in `catalog/remote-access-ssh-ca.yml` are eligible.
 
 The ephemeral custom credential injects the environment values documented
@@ -181,8 +185,10 @@ quarantine.
 3. Build a reviewed AWX execution environment from the pinned dependencies.
 4. Bind an exact project, template, inventory, custom credential type, machine
    credential reference, wrapper, and content revision.
-5. Disable prompt-on-launch inventory, credential, SCM, limit, and extra-vars
-   substitutions for integrated templates.
+5. Disable prompt-on-launch inventory, SCM, job tags, and extra-vars
+   substitutions. Enable only limit and credential prompts, which the trusted
+   ServiceRadar dispatcher fills from the reviewed binding and per-execution
+   callback lifecycle; never expose them as operator-entered launch inputs.
 6. Start with read-only preflight, then a single standard-risk canary.
 
 Never import a moving branch into a production template.
