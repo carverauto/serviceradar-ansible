@@ -73,8 +73,8 @@ execution.
 
 Mounted-media mode requires an absolute path on a drive that Windows reports as
 CD-ROM (`Win32_LogicalDisk.DriveType == 5`). This prevents a nominal
-`mounted_iso` launch from silently using a mutable local disk. The optional
-SHA-256 adds an exact-media assertion and is strongly recommended.
+`mounted_iso` launch from silently using a mutable local disk. The mandatory
+SHA-256 adds an exact-media assertion after the read-only discovery step.
 
 ```yaml
 windows_qemu_guest_agent_source: mounted_iso
@@ -94,7 +94,7 @@ package selected by the operator; it never guesses among attached media.
 | `windows_qemu_guest_agent_source` | `mounted_iso` | `mounted_iso` or `https`. |
 | `windows_qemu_guest_agent_msi_url` | empty | HTTPS `.msi` URL; required only in HTTPS mode. |
 | `windows_qemu_guest_agent_msi_path` | empty | Absolute MSI path on mounted CD-ROM; required only in mounted-media mode. |
-| `windows_qemu_guest_agent_msi_checksum` | empty | Mandatory 64-hex SHA-256 for HTTPS; optional for mounted media. |
+| `windows_qemu_guest_agent_msi_checksum` | empty | Mandatory 64-hex SHA-256 for both HTTPS and mounted media. Run preflight to discover it before installation. |
 | `windows_qemu_guest_agent_expected_version` | empty | Optional exact file or product version assertion. The role always requires a non-empty installed version. |
 | `windows_qemu_guest_agent_reboot_policy` | `never` | `never`, `if_required`, or `on_change`. |
 | `windows_qemu_guest_agent_reboot_timeout` | `900` | Maximum Windows reboot wait in seconds. |

@@ -1,6 +1,7 @@
 ---
-# Choose one explicit acquisition boundary. HTTPS requires an immutable SHA-256;
-# mounted_iso requires an MSI path on a Windows CD-ROM drive.
+# Choose one explicit acquisition boundary. Both HTTPS and mounted ISO sources
+# require an immutable SHA-256; mounted_iso additionally requires a Windows
+# CD-ROM path.
 windows_qemu_guest_agent_source: mounted_iso
 windows_qemu_guest_agent_msi_url: ""
 windows_qemu_guest_agent_msi_path: ""

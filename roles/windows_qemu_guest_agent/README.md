@@ -9,7 +9,7 @@ The role accepts exactly two source modes:
 - `https`: an HTTPS `.msi` URL without embedded credentials, query string, or
   fragment, plus a mandatory exact SHA-256.
 - `mounted_iso`: an absolute `.msi` path that the guest reports as CD-ROM
-  media. A SHA-256 is optional but recommended.
+  media, plus its exact SHA-256.
 
 Authenticode validation is always enabled. The role never downloads `latest`,
 disables TLS validation, stores credentials, configures WinRM/OpenSSH, installs

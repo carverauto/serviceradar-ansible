@@ -230,6 +230,7 @@ def check_windows_qga() -> None:
     )
     required_task_boundaries = {
         "windows_qemu_guest_agent_source != 'https'",
+        "windows_qemu_guest_agent_source != 'mounted_iso'",
         "match('^https://[^/@?#]+",
         "match('^[A-Fa-f0-9]{64}$')",
         "ansible.windows.win_get_url:",
