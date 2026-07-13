@@ -11,9 +11,6 @@ jobs:
     # The organization-wide ubuntu24 pool uses disposable DinD-backed workers;
     # this workflow does not request signing labels or repository credentials.
     runs-on: [ubuntu24]
-    container:
-      image: >-
-        python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
     steps:
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -33,20 +30,6 @@ jobs:
 
   molecule-systemd-sshd:
     runs-on: [ubuntu24]
-    container:
-      image: >-
-        python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
-    services:
-      docker:
-        image: >-
-          docker:27.5.1-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
-        env:
-          DOCKER_TLS_CERTDIR: ""
-        options: --privileged
-    env:
-      # The privileged daemon is an isolated sidecar on a disposable worker;
-      # the host Docker socket is never mounted into untrusted PR code.
-      DOCKER_HOST: tcp://docker:2375
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +41,8 @@ jobs:
         run: >-
           python -m pip install --disable-pip-version-check --no-cache-dir
           --require-hashes -r requirements-ci.lock
+      - name: Verify disposable Docker daemon
+        run: docker info
       - name: Generate an ephemeral uncommitted test CA and run Molecule
         run: |
           set -euo pipefail
