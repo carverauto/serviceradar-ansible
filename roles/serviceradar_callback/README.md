@@ -33,3 +33,9 @@ with a five-second transport timeout, using that same key and body. This gives
 ServiceRadar time to prove the accepted AWX job and exact host scope after a
 sanitized pending response, while a lost response can recover without adding a
 second logical read.
+
+The integrated entrypoint first executes one `delegate_to: localhost` assertion
+for every AWX-limited inventory host. That contacts no managed target, but it
+materializes a host-ID-bound AWX event for each exact host before this role runs.
+ServiceRadar can therefore compare the accepted job's complete AWX host-summary
+set with its immutable execution targets before activating the grant.

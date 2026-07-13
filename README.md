@@ -47,6 +47,9 @@ managed host or written to facts, artifacts, relaunch data, or logs.
 The callback also carries AWX's system-provided `JOB_ID`, read directly from the
 execution environment rather than injected by the custom credential, so a copy
 or relaunch cannot reuse another accepted job's grant.
+Before the callback, one controller-local task runs for every AWX-limited host
+to materialize the exact host-ID set in AWX without opening a managed-host
+connection; ServiceRadar activates the grant only after that set matches.
 
 Integrated launch requires both `ansible.runs.launch` and
 `devices.remote_access.ssh.ca_bundle.read`. Retirement additionally requires

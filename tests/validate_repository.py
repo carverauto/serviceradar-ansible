@@ -59,6 +59,7 @@ def check_wrappers() -> None:
     integrated = (ROOT / "playbooks/integrated.yml").read_text(encoding="utf-8")
     required_boundaries = {
         "Snapshot the exact AWX-limited host set without contacting targets",
+        "Materialize every exact AWX host binding before callback",
         "connection: local",
         "Resolve and validate the callback exactly once on the AWX controller",
         "hosts: serviceradar_callback_targets",
@@ -68,6 +69,15 @@ def check_wrappers() -> None:
         raise AssertionError(f"integrated controller/managed boundary missing: {missing}")
     if "serial:" in integrated:
         raise AssertionError("integrated callback must not repeat across serial batches")
+    materialization = integrated.split(
+        "- name: Materialize every exact AWX host binding before callback", 1
+    )[1].split(
+        "- name: Resolve and validate the callback exactly once on the AWX controller", 1
+    )[0]
+    if "delegate_to: localhost" not in materialization or "run_once:" in materialization:
+        raise AssertionError(
+            "AWX scope materialization must run locally once for every limited host"
+        )
 
     callback = (ROOT / "roles/serviceradar_callback/tasks/main.yml").read_text(
         encoding="utf-8"

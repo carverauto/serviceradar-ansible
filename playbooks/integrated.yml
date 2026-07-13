@@ -27,6 +27,16 @@
       run_once: true
       delegate_to: localhost
 
+    - name: Materialize every exact AWX host binding before callback
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in ansible_play_hosts_all
+          - inventory_hostname in groups['serviceradar_callback_targets']
+        fail_msg: The controller-only callback host set changed before materialization.
+      no_log: true
+      changed_when: false
+      delegate_to: localhost
+
 - name: Resolve and validate the callback exactly once on the AWX controller
   hosts: serviceradar_callback_targets
   connection: local

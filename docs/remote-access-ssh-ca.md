@@ -126,6 +126,9 @@ bindings and an exact non-empty AWX limit. Only root wrappers listed under
 The ephemeral custom credential injects the environment values documented
 in `roles/serviceradar_callback/README.md`. The callback role:
 
+- runs only after a controller-local task has materialized one AWX host-bound
+  event for every limited target, so ServiceRadar can prove exact host-ID set
+  equality without contacting a managed host;
 - reads AWX's system-provided `JOB_ID` directly, never from a custom credential
   or playbook variable, and requires the response to echo that exact job;
 - uses one controller-local HTTP task with strict TLS, no proxy, no redirects,
