@@ -30,7 +30,11 @@ fi
 if command -v ansible-playbook >/dev/null 2>&1; then
   while IFS= read -r wrapper; do
     ansible-playbook --syntax-check -i 'localhost,' "${wrapper}"
-  done < <(find . -maxdepth 1 -name '*.yml' -print | sort)
+  done < <(
+    find . -maxdepth 1 -type f \
+      \( -name 'remote-access-*.yml' -o -name 'install-agent-*.yml' -o -name 'ping.yml' \) \
+      -print | sort
+  )
 else
   echo "SKIP: ansible-playbook is not installed" >&2
 fi

@@ -195,7 +195,9 @@
   ansible.builtin.assert:
     that:
       - item.inventory_hostname in groups['serviceradar_callback_targets']
-      - item.inventory_address | string == hostvars[item.inventory_hostname].get('ansible_host', item.inventory_hostname) | string
+      - >-
+        item.inventory_address | string ==
+        hostvars[item.inventory_hostname].get('ansible_host', item.inventory_hostname) | string
       - item.target_identity is mapping
       - >-
         item.target_identity.keys() |

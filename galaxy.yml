@@ -16,9 +16,18 @@ tags:
 repository: https://code.carverauto.dev/carverauto/serviceradar-ansible
 issues: https://code.carverauto.dev/carverauto/serviceradar-ansible/issues
 build_ignore:
+  - .ansible
+  - .ansible-lint
+  - .cache
+  - .collections
   - .forgejo
   - .gitignore
+  - .molecule
+  - .venv
+  - .yamllint
+  - __pycache__
   - molecule
   - tests
   - requirements-ci.txt
+  - requirements-ci.lock
   - ansible.cfg

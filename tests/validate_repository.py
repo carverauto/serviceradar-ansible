@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
+IGNORED_DIRS = {".git", ".venv", ".ansible", ".cache", ".collections", ".molecule", "__pycache__"}
 
 INTEGRATED_WRAPPERS = {
     "remote-access-integrated-preflight.yml": ("preflight", "present", "enroll"),
@@ -26,8 +27,14 @@ INTEGRATED_WRAPPERS = {
 }
 
 
+def repository_files(pattern: str = "*"):
+    for path in ROOT.rglob(pattern):
+        if path.is_file() and not any(part in IGNORED_DIRS for part in path.parts):
+            yield path
+
+
 def check_json() -> None:
-    for path in ROOT.rglob("*.json"):
+    for path in repository_files("*.json"):
         with path.open(encoding="utf-8") as source:
             json.load(source)
 
@@ -92,9 +99,7 @@ def check_no_private_material() -> None:
         re.IGNORECASE,
     )
     findings: list[str] = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
+    for path in repository_files():
         if path == Path(__file__):
             continue
         try:

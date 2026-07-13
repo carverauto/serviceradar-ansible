@@ -7,7 +7,17 @@ import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXCLUDED_PARTS = {".git", ".ansible", ".cache", ".collections", "__pycache__", "dist"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".ansible",
+    ".cache",
+    ".collections",
+    ".molecule",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "dist",
+}
 
 
 def main() -> None:

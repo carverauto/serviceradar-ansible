@@ -2,6 +2,7 @@
 .cache/
 .collections/
 .molecule/
+.venv/
 .pytest_cache/
 __pycache__/
 *.retry

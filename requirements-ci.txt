@@ -1,4 +1,5 @@
-# Exact versions are the reviewed CI dependency set. Update through a dedicated PR.
+# Direct constraints used to regenerate requirements-ci.lock with uv. CI installs
+# the fully resolved lock with --require-hashes; update both in a dedicated PR.
 ansible-core==2.17.12
 ansible-lint==25.6.1
 molecule==25.6.0

@@ -1,7 +1,7 @@
 ---
 name: remote-access-content-quality
 
-on:
+"on":
   pull_request:
   push:
     branches: [main]
@@ -18,7 +18,9 @@ jobs:
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install exact reviewed lint dependencies
-        run: python -m pip install --disable-pip-version-check --no-cache-dir -r requirements-ci.txt
+        run: >-
+          python -m pip install --disable-pip-version-check --no-cache-dir
+          --require-hashes -r requirements-ci.lock
       - name: Run repository, YAML, Ansible lint, and every wrapper syntax gate
         run: scripts/check.sh
       - name: Build collection artifact and record immutable content provenance
@@ -53,7 +55,9 @@ jobs:
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install exact reviewed test dependencies
-        run: python -m pip install --disable-pip-version-check --no-cache-dir -r requirements-ci.txt
+        run: >-
+          python -m pip install --disable-pip-version-check --no-cache-dir
+          --require-hashes -r requirements-ci.lock
       - name: Generate an ephemeral uncommitted test CA and run Molecule
         run: |
           set -euo pipefail
