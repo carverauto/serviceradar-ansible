@@ -39,6 +39,24 @@ def check_json() -> None:
             json.load(source)
 
 
+def check_callback_response_schema() -> None:
+    path = ROOT / "catalog/ssh-ca-bundle-response.schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+
+    if schema.get("$schema") != "http://json-schema.org/draft-07/schema#":
+        raise AssertionError("callback response schema must use the supported draft-07 contract")
+    if "$defs" in schema or "definitions" not in schema:
+        raise AssertionError("callback response schema definitions are not draft-07 compatible")
+    if "job_id" not in schema.get("required", []):
+        raise AssertionError("callback response schema must require the AWX runtime job ID")
+    if schema.get("properties", {}).get("job_id") != {"type": "integer", "minimum": 1}:
+        raise AssertionError("callback response schema has an invalid AWX runtime job ID")
+    if schema.get("properties", {}).get("targets", {}).get("items") != {
+        "$ref": "#/definitions/target"
+    }:
+        raise AssertionError("callback response schema target reference is not canonical")
+
+
 def check_wrappers() -> None:
     missing = sorted(name for name in INTEGRATED_WRAPPERS if not (ROOT / name).is_file())
     if missing:
@@ -188,6 +206,7 @@ def check_ci_boundary() -> None:
 
 def main() -> None:
     check_json()
+    check_callback_response_schema()
     check_wrappers()
     check_no_private_material()
     check_integrated_catalog_only()
