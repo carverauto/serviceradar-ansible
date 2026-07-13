@@ -18,7 +18,7 @@
       - windows_qemu_guest_agent_post_reboot_delay >= 0
       - >-
         windows_qemu_guest_agent_download_path is
-        match('^[A-Za-z]:\\.*\.msi$')
+        match(_windows_qemu_guest_agent_absolute_msi_pattern)
       - >-
         windows_qemu_guest_agent_source != 'https' or
         windows_qemu_guest_agent_msi_url is
@@ -30,7 +30,7 @@
       - >-
         windows_qemu_guest_agent_source != 'mounted_iso' or
         windows_qemu_guest_agent_msi_path is
-        match('^[A-Za-z]:\\.*\.msi$')
+        match(_windows_qemu_guest_agent_absolute_msi_pattern)
       - >-
         windows_qemu_guest_agent_source != 'mounted_iso' or
         windows_qemu_guest_agent_msi_url | length == 0

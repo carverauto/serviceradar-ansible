@@ -28,6 +28,7 @@ else
 fi
 
 if command -v ansible-playbook >/dev/null 2>&1; then
+  ansible-playbook -i 'localhost,' tests/windows_qga_path_contract.yml
   while IFS= read -r wrapper; do
     ansible-playbook --syntax-check -i 'localhost,' "${wrapper}"
   done < <(

@@ -36,8 +36,10 @@ WINDOWS_QGA_REQUIRED_FILES = {
     "roles/windows_qemu_guest_agent/meta/argument_specs.yml",
     "roles/windows_qemu_guest_agent/meta/main.yml",
     "roles/windows_qemu_guest_agent/tasks/main.yml",
+    "roles/windows_qemu_guest_agent/vars/main.yml",
     "molecule/windows_qga_static/molecule.yml",
     "molecule/windows_qga_static/converge.yml",
+    "tests/windows_qga_path_contract.yml",
     "requirements.yml",
 }
 
