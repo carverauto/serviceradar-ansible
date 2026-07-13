@@ -80,7 +80,8 @@ def check_wrappers() -> None:
     for value in (
         "status_code: [200, 409]",
         "until: sr_callback_response.status | default(0) == 200",
-        "retries: 5",
+        "timeout: 5",
+        "retries: 30",
     ):
         if value not in callback:
             raise AssertionError(f"bounded callback retry contract missing: {value}")

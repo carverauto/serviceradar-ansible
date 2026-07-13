@@ -127,7 +127,7 @@ The ephemeral custom credential injects the environment values documented
 in `roles/serviceradar_callback/README.md`. The callback role:
 
 - uses one controller-local HTTP task with strict TLS, no proxy, no redirects,
-  a ten-second per-attempt timeout, `no_log`, and at most five attempts;
+  a five-second per-attempt timeout, `no_log`, and at most thirty attempts;
 - sends a server-minted idempotency key bound to the exact request so an
   operator can safely retry only a byte-equivalent request after a lost
   response; key reuse with different request bytes must fail closed;
