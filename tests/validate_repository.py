@@ -210,6 +210,7 @@ def check_windows_qga() -> None:
         "Get-AuthenticodeSignature",
         "Get-FileHash",
         "authenticode_status",
+        "allow_unsigned_pinned_iso",
         "sha256",
         "path",
     ):
@@ -237,7 +238,9 @@ def check_windows_qga() -> None:
         "validate_certs: true",
         "checksum_algorithm: sha256",
         "ansible.windows.win_package:",
-        "verify_signature: true",
+        "verify_signature: >-",
+        "windows_qemu_guest_agent_signature_policy == 'require_valid'",
+        "allow_unsigned_pinned_iso",
         "Win32_LogicalDisk",
         "drive_type | int == 5",
         "ansible.windows.win_reboot:",

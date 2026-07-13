@@ -28,33 +28,41 @@
                   }
           )
           $Ansible.Changed = $false
-          [PSCustomObject]@{ artifacts = $artifacts }
+          $artifacts
       register: windows_qemu_guest_agent_preflight
 
     - name: Report only the mounted artifact trust record
       ansible.builtin.debug:
-        msg: "{{ windows_qemu_guest_agent_preflight.output[0].artifacts | default([]) }}"
+        msg: "{{ windows_qemu_guest_agent_preflight.output | default([]) }}"
 
-    - name: Require one valid signed MSI and the optional expected SHA-256
+    - name: Require one policy-compliant MSI and the expected SHA-256
       ansible.builtin.assert:
         that:
-          - windows_qemu_guest_agent_preflight.output | length == 1
-          - windows_qemu_guest_agent_preflight.output[0].artifacts | length == 1
           - >-
-            windows_qemu_guest_agent_preflight.output[0].artifacts[0].authenticode_status ==
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') in
+            ['require_valid', 'allow_unsigned_pinned_iso']
+          - windows_qemu_guest_agent_preflight.output | length == 1
+          - >-
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') != 'require_valid' or
+            windows_qemu_guest_agent_preflight.output[0].authenticode_status ==
             'Valid'
           - >-
-            windows_qemu_guest_agent_preflight_expected_checksum | default('') |
-            length == 0 or
-            windows_qemu_guest_agent_preflight_expected_checksum is
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') != 'allow_unsigned_pinned_iso' or
+            windows_qemu_guest_agent_preflight.output[0].authenticode_status in
+            ['Valid', 'NotSigned']
+          - >-
+            windows_qemu_guest_agent_preflight_expected_checksum |
+            default('') is
             match('^[A-Fa-f0-9]{64}$')
           - >-
-            windows_qemu_guest_agent_preflight_expected_checksum | default('') |
-            length == 0 or
-            windows_qemu_guest_agent_preflight.output[0].artifacts[0].sha256 ==
+            windows_qemu_guest_agent_preflight.output[0].sha256 ==
             windows_qemu_guest_agent_preflight_expected_checksum |
             default('') | lower
         fail_msg: >-
           Preflight requires exactly one guest-agent\qemu-ga-x86_64.msi on
-          CD-ROM, a Valid Authenticode signature, and (when provided) the exact
-          expected SHA-256.
+          CD-ROM and the exact expected SHA-256. The default requires a Valid
+          Authenticode signature. allow_unsigned_pinned_iso explicitly permits
+          only Valid or NotSigned media with the pinned digest.

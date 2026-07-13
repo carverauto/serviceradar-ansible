@@ -16,6 +16,10 @@ argument_specs:
       windows_qemu_guest_agent_msi_checksum:
         type: str
         default: ""
+      windows_qemu_guest_agent_signature_policy:
+        type: str
+        choices: [require_valid, allow_unsigned_pinned_iso]
+        default: require_valid
       windows_qemu_guest_agent_download_path:
         type: str
         default: 'C:\Windows\Temp\serviceradar-qemu-ga-x86_64.msi'

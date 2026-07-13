@@ -7,6 +7,11 @@ windows_qemu_guest_agent_msi_url: ""
 windows_qemu_guest_agent_msi_path: ""
 windows_qemu_guest_agent_msi_checksum: ""
 
+# Upstream packages should normally carry a valid Authenticode signature. Some
+# VirtIO-Win QGA MSI builds are intentionally unsigned; accepting one requires
+# the explicit mounted-ISO-only policy plus the mandatory pinned SHA-256.
+windows_qemu_guest_agent_signature_policy: require_valid
+
 # HTTPS downloads are staged only for the duration of the role and are removed
 # in an `always` block, including after an installation failure.
 windows_qemu_guest_agent_download_path: 'C:\Windows\Temp\serviceradar-qemu-ga-x86_64.msi'

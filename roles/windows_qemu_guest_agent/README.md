@@ -11,9 +11,11 @@ The role accepts exactly two source modes:
 - `mounted_iso`: an absolute `.msi` path that the guest reports as CD-ROM
   media, plus its exact SHA-256.
 
-Authenticode validation is always enabled. The role never downloads `latest`,
-disables TLS validation, stores credentials, configures WinRM/OpenSSH, installs
-the VirtIO serial driver, or changes Proxmox VM hardware.
+Authenticode validation is enabled by default and mandatory for HTTPS. The
+explicit `allow_unsigned_pinned_iso` policy is limited to mounted CD-ROM media
+with an exact SHA-256. The role never downloads `latest`, disables TLS
+validation, stores credentials, configures WinRM/OpenSSH, installs the VirtIO
+serial driver, or changes Proxmox VM hardware.
 
 Use the root
 [`install-qemu-guest-agent-windows.yml`](../../install-qemu-guest-agent-windows.yml)

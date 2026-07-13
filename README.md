@@ -73,9 +73,10 @@ separate callback-grant and hardened-targeting dependencies pass together.
 `install-qemu-guest-agent-windows.yml` installs or upgrades the upstream QEMU
 Guest Agent MSI on an existing 64-bit Windows guest. It accepts either a pinned
 HTTPS `.msi` plus mandatory SHA-256, or an explicit MSI path on a mounted
-VirtIO CD-ROM. TLS and Authenticode validation are always enabled. After
-installation it configures `QEMU-GA` as automatic/running and verifies the
-service's actual binary and version.
+VirtIO CD-ROM. TLS validation is always enabled; Authenticode is required by
+default, with an explicit checksum-pinned mounted-ISO exception for upstream
+unsigned QGA MSI builds. After installation it configures `QEMU-GA` as
+automatic/running and verifies the service's actual binary and version.
 
 The playbook does not bootstrap Windows management, install the VirtIO serial
 driver, alter VM hardware, or hold a Proxmox credential. Enable the QGA channel

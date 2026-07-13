@@ -9,6 +9,10 @@
          default(ansible_facts['architecture'] | default('')) | lower) in
         ['amd64', 'x86_64', '64-bit', '64 bit']
       - windows_qemu_guest_agent_service_name == 'QEMU-GA'
+      - >-
+        windows_qemu_guest_agent_signature_policy !=
+        'allow_unsigned_pinned_iso' or
+        windows_qemu_guest_agent_source == 'mounted_iso'
       - windows_qemu_guest_agent_download_timeout >= 1
       - windows_qemu_guest_agent_reboot_timeout >= 60
       - windows_qemu_guest_agent_post_reboot_delay >= 0
@@ -39,7 +43,9 @@
       either an HTTPS .msi URL without userinfo/query/fragment plus an exact
       64-hex SHA-256, or an absolute .msi path on a mounted CD-ROM plus its
       exact SHA-256. Check mode is intentionally unsupported because readiness
-      requires live service and binary verification.
+      requires live service and binary verification. Unsigned artifacts are
+      accepted only through the explicit allow_unsigned_pinned_iso policy on
+      mounted CD-ROM media with the pinned digest.
 
 - name: Inspect the VirtIO serial controller in Windows
   ansible.windows.win_powershell:
@@ -161,7 +167,8 @@
         state: present
         checksum: "{{ windows_qemu_guest_agent_msi_checksum }}"
         checksum_algorithm: sha256
-        verify_signature: true
+        verify_signature: >-
+          {{ windows_qemu_guest_agent_signature_policy == 'require_valid' }}
       register: windows_qemu_guest_agent_package
   always:
     - name: Remove the transient HTTPS MSI

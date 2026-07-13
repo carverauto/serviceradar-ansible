@@ -16,4 +16,6 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A reusable Windows QEMU Guest Agent role and AWX-visible wrapper.
 - A read-only mounted-MSI path, SHA-256, and Authenticode preflight wrapper.
 - Fail-closed HTTPS/checksum and mounted VirtIO ISO artifact trust modes.
+- An explicit mounted-ISO-only policy for upstream unsigned QGA MSI builds,
+  gated by the exact pinned SHA-256; signed installers remain the default.
 - QEMU-GA service, binary/version, VirtIO serial, and reboot-policy verification.

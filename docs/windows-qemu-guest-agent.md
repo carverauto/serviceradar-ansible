@@ -46,7 +46,8 @@ ansible-galaxy collection install -r requirements.yml -p .collections
 ```
 
 `ansible.windows` is not included in `ansible-core`. Version 3.4.0 or newer is
-required because this role always enables `win_package.verify_signature`.
+required because this role uses `win_package.verify_signature`; it is enabled
+by default and disabled only for the explicit pinned unsigned-ISO policy.
 
 ## Secure artifact sources
 
@@ -55,7 +56,8 @@ required because this role always enables `win_package.verify_signature`.
 HTTPS mode requires a literal `.msi` URL and an exact SHA-256. URLs containing
 userinfo, a query string, or a fragment are refused so credentials and
 short-lived download grants cannot leak into inventory, logs, or AWX relaunch
-data. TLS certificate validation and Authenticode validation cannot be disabled.
+data. TLS certificate validation cannot be disabled. Authenticode validation is
+required for HTTPS sources.
 
 ```yaml
 windows_qemu_guest_agent_source: https
@@ -80,7 +82,20 @@ SHA-256 adds an exact-media assertion after the read-only discovery step.
 windows_qemu_guest_agent_source: mounted_iso
 windows_qemu_guest_agent_msi_path: 'D:\guest-agent\qemu-ga-x86_64.msi'
 windows_qemu_guest_agent_msi_checksum: REPLACE_WITH_64_HEX_SHA256
+windows_qemu_guest_agent_signature_policy: require_valid
 ```
+
+Some upstream VirtIO-Win QGA MSI builds report `NotSigned`. After the operator
+has independently reviewed and pinned the exact ISO/MSI hashes, that specific
+mounted-media case may use:
+
+```yaml
+windows_qemu_guest_agent_signature_policy: allow_unsigned_pinned_iso
+```
+
+This exception is rejected for HTTPS sources and still requires the exact MSI
+SHA-256. It does not accept `UnknownError`, `HashMismatch`, `NotTrusted`, or any
+other invalid Authenticode status.
 
 VirtIO media normally contains both `qemu-ga-i386.msi` and
 `qemu-ga-x86_64.msi`. This role supports 64-bit Windows and requires the x64
@@ -95,6 +110,7 @@ package selected by the operator; it never guesses among attached media.
 | `windows_qemu_guest_agent_msi_url` | empty | HTTPS `.msi` URL; required only in HTTPS mode. |
 | `windows_qemu_guest_agent_msi_path` | empty | Absolute MSI path on mounted CD-ROM; required only in mounted-media mode. |
 | `windows_qemu_guest_agent_msi_checksum` | empty | Mandatory 64-hex SHA-256 for both HTTPS and mounted media. Run preflight to discover it before installation. |
+| `windows_qemu_guest_agent_signature_policy` | `require_valid` | Require `Valid` Authenticode, or explicitly allow `NotSigned` only for a checksum-pinned mounted ISO. |
 | `windows_qemu_guest_agent_expected_version` | empty | Optional exact file or product version assertion. The role always requires a non-empty installed version. |
 | `windows_qemu_guest_agent_reboot_policy` | `never` | `never`, `if_required`, or `on_change`. |
 | `windows_qemu_guest_agent_reboot_timeout` | `900` | Maximum Windows reboot wait in seconds. |
@@ -153,11 +169,14 @@ shell must exist before launch. This role does not create that access path.
 
 Before the mutating launch, run `qemu-guest-agent-windows-preflight.yml` against
 the same exact AWX limit and machine credential. It is read-only and emits only
-the discovered CD-ROM MSI path, SHA-256, and Authenticode status. An optional
-expected digest turns discovery into an exact-media proof:
+the discovered CD-ROM MSI path, SHA-256, and Authenticode status. The expected
+digest is mandatory. The signature policy defaults to `require_valid`; use the
+same explicit pinned-ISO exception only after reviewing an upstream unsigned
+build:
 
 ```yaml
 windows_qemu_guest_agent_preflight_expected_checksum: REPLACE_WITH_64_HEX_SHA256
+windows_qemu_guest_agent_preflight_signature_policy: require_valid
 ```
 
 1. Pin the AWX project to a reviewed commit/content digest of this repository.
