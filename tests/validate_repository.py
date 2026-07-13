@@ -59,6 +59,7 @@ LINUX_TRUSTED_CA_REQUIRED_FILES = {
 PROXMOX_INVENTORY_REQUIRED_FILES = {
     "inventory/proxmox.proxmox.yml",
     "docs/proxmox-dynamic-inventory.md",
+    "collections/requirements.yml",
     "awx/credential-types/proxmox-api-token-ca/v1/inputs.json",
     "awx/credential-types/proxmox-api-token-ca/v1/injectors.json",
 }
@@ -429,6 +430,11 @@ def check_proxmox_inventory() -> None:
         raise AssertionError(f"Proxmox inventory security boundary missing: {absent}")
     if "validate_certs: false" in inventory:
         raise AssertionError("Proxmox inventory must never disable TLS verification")
+
+    requirements = (ROOT / "collections/requirements.yml").read_text(encoding="utf-8")
+    for value in ("name: community.proxmox", "version: 2.0.0"):
+        if value not in requirements:
+            raise AssertionError(f"pinned Proxmox collection dependency missing: {value}")
 
     inputs = json.loads(
         (

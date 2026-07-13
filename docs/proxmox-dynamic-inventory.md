@@ -11,7 +11,9 @@ through the versioned custom credential definition under
 1. Use an execution environment whose supported Ansible Core,
    `community.proxmox`, `proxmoxer`, and `requests` versions are mutually
    compatible. Treat a collection compatibility warning as a failed readiness
-   check rather than silently accepting an unsupported combination.
+   check rather than silently accepting an unsupported combination. The AWX
+   project dependency is pinned in `collections/requirements.yml`; project
+   collection syncing must be enabled so AWX installs that exact version.
 2. Create the custom credential type from the published `inputs.json` and
    `injectors.json` without changing the fields or injectors.
 3. Create one credential instance for one Proxmox cluster. Set `url` to the
