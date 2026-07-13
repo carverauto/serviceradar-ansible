@@ -1,9 +1,10 @@
 # serviceradar-ansible
 
 Public Apache-2.0 automation for ServiceRadar operators. This repository now
-contains two independent content families:
+contains three independent content families:
 
 - Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
+- Trusted QEMU Guest Agent installation for Windows Proxmox/QEMU guests.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
 ## SSH remote-access enrollment
@@ -67,6 +68,22 @@ The initial catalog metadata is deliberately gated with
 live ServiceRadar/AWX instance until the mutation/rollback matrix and the
 separate callback-grant and hardened-targeting dependencies pass together.
 
+## Windows QEMU Guest Agent
+
+`install-qemu-guest-agent-windows.yml` installs or upgrades the upstream QEMU
+Guest Agent MSI on an existing 64-bit Windows guest. It accepts either a pinned
+HTTPS `.msi` plus mandatory SHA-256, or an explicit MSI path on a mounted
+VirtIO CD-ROM. TLS and Authenticode validation are always enabled. After
+installation it configures `QEMU-GA` as automatic/running and verifies the
+service's actual binary and version.
+
+The playbook does not bootstrap Windows management, install the VirtIO serial
+driver, alter VM hardware, or hold a Proxmox credential. Enable the QGA channel
+on the exact VM and establish WinRM or Windows OpenSSH first. See the
+[Windows QGA operator guide](docs/windows-qemu-guest-agent.md), the
+[role interface](roles/windows_qemu_guest_agent/README.md), and the non-secret
+[inventory example](examples/windows-qemu-guest-agent-inventory.yml).
+
 ## Agent installation content
 
 Ansible playbooks for installing the [ServiceRadar](https://code.carverauto.dev/carverauto/serviceradar)
@@ -81,6 +98,8 @@ the AWX project sync lists them.
 | `ping.yml` | Smoke test for the AWX -> device launch path. `ansible.builtin.ping` plus a fact-based debug line printing hostname, default IPv4, distro, and architecture. Read-only, no `become`. |
 | `install-agent-debian.yml` | Installs `serviceradar-agent` on Debian/Ubuntu hosts (`apt`, `.deb`). |
 | `install-agent-redhat.yml` | Installs `serviceradar-agent` on RHEL/Rocky/Alma/Fedora hosts (`dnf`/`dnf5`/`yum` via `ansible.builtin.package`, `.rpm`). |
+| `install-qemu-guest-agent-windows.yml` | Installs and verifies QEMU Guest Agent on a pre-bootstrapped Windows QEMU/Proxmox guest. |
+| `qemu-guest-agent-windows-preflight.yml` | Read-only discovery of mounted QGA MSI path, SHA-256, and Authenticode status. |
 
 Both installers:
 
@@ -176,8 +195,8 @@ installed + service up.
 
 1. **Project**: this repository
    (`ssh://git@git.carverauto.dev/carverauto/serviceradar-ansible.git`,
-   branch `main`). Playbooks are at the repo root, so the project sync
-   lists all three.
+   branch `main`). Playbooks are at the repo root, so the project sync lists
+   every supported wrapper.
 2. **Inventory**: the ServiceRadar device inventory.
 3. **Job template (smoke)**: playbook `ping.yml`, machine credential for
    the device, **limit** = target hostname. No extra vars needed. Run

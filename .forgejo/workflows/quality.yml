@@ -23,6 +23,11 @@ jobs:
           .venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r requirements-ci.lock
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install exact reviewed Ansible collection dependencies
+        run: |
+          set -euo pipefail
+          .venv/bin/ansible-galaxy collection install \
+            --collections-path .collections --requirements-file requirements.yml
       - name: Run repository, YAML, Ansible lint, and every wrapper syntax gate
         run: scripts/check.sh
       - name: Build collection artifact and record immutable content provenance
@@ -63,6 +68,11 @@ jobs:
           .venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r requirements-ci.lock
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install exact reviewed Ansible collection dependencies
+        run: |
+          set -euo pipefail
+          .venv/bin/ansible-galaxy collection install \
+            --collections-path .collections --requirements-file requirements.yml
       - name: Generate an ephemeral uncommitted test CA and run pinned Molecule matrix
         env:
           DOCKER_HOST: unix:///var/run/docker.sock

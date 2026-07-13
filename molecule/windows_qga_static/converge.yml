@@ -1,0 +1,25 @@
+---
+- name: Exercise the pinned HTTPS role interface at syntax time
+  hosts: windows_qga_https
+  gather_facts: false
+  vars:
+    windows_qemu_guest_agent_source: https
+    windows_qemu_guest_agent_msi_url: >-
+      https://artifacts.example.net/virtio-win/0.1.271/qemu-ga-x86_64.msi
+    windows_qemu_guest_agent_msi_checksum: >-
+      22230284dda8ba4c96a834fe1087228a1db5d0b86247a9d7fcb164d279634817
+    windows_qemu_guest_agent_reboot_policy: never
+  roles:
+    - role: windows_qemu_guest_agent
+
+- name: Exercise the mounted VirtIO ISO role interface at syntax time
+  hosts: windows_qga_mounted_iso
+  gather_facts: false
+  vars:
+    windows_qemu_guest_agent_source: mounted_iso
+    windows_qemu_guest_agent_msi_path: 'D:\guest-agent\qemu-ga-x86_64.msi'
+    windows_qemu_guest_agent_msi_checksum: >-
+      22230284dda8ba4c96a834fe1087228a1db5d0b86247a9d7fcb164d279634817
+    windows_qemu_guest_agent_reboot_policy: if_required
+  roles:
+    - role: windows_qemu_guest_agent

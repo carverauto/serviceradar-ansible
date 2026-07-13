@@ -26,6 +26,21 @@ INTEGRATED_WRAPPERS = {
     "remote-access-integrated-absent-commit.yml": ("commit", "absent", "remove"),
 }
 
+WINDOWS_QGA_REQUIRED_FILES = {
+    "install-qemu-guest-agent-windows.yml",
+    "qemu-guest-agent-windows-preflight.yml",
+    "docs/windows-qemu-guest-agent.md",
+    "examples/windows-qemu-guest-agent-inventory.yml",
+    "roles/windows_qemu_guest_agent/README.md",
+    "roles/windows_qemu_guest_agent/defaults/main.yml",
+    "roles/windows_qemu_guest_agent/meta/argument_specs.yml",
+    "roles/windows_qemu_guest_agent/meta/main.yml",
+    "roles/windows_qemu_guest_agent/tasks/main.yml",
+    "molecule/windows_qga_static/molecule.yml",
+    "molecule/windows_qga_static/converge.yml",
+    "requirements.yml",
+}
+
 
 def repository_files(pattern: str = "*"):
     for path in ROOT.rglob(pattern):
@@ -167,6 +182,134 @@ def check_no_private_material() -> None:
         raise AssertionError(f"private material/export pattern found: {findings}")
 
 
+def check_windows_qga() -> None:
+    missing = sorted(
+        name for name in WINDOWS_QGA_REQUIRED_FILES if not (ROOT / name).is_file()
+    )
+    if missing:
+        raise AssertionError(f"missing Windows QGA content: {missing}")
+
+    wrapper = (ROOT / "install-qemu-guest-agent-windows.yml").read_text(
+        encoding="utf-8"
+    )
+    for value in (
+        "hosts: \"{{ target_hosts | default('all') }}\"",
+        "role: windows_qemu_guest_agent",
+        "gather_facts: true",
+    ):
+        if value not in wrapper:
+            raise AssertionError(f"Windows QGA wrapper contract missing: {value}")
+
+    preflight = (ROOT / "qemu-guest-agent-windows-preflight.yml").read_text(
+        encoding="utf-8"
+    )
+    for value in (
+        "gather_facts: false",
+        "Win32_LogicalDisk",
+        "DriveType=5",
+        "Get-AuthenticodeSignature",
+        "Get-FileHash",
+        "authenticode_status",
+        "sha256",
+        "path",
+    ):
+        if value not in preflight:
+            raise AssertionError(f"Windows QGA read-only preflight missing: {value}")
+    for value in (
+        "ansible.windows.win_package:",
+        "ansible.windows.win_service:",
+        "ansible.windows.win_reboot:",
+        "ansible.windows.win_file:",
+        "ansible.windows.win_get_url:",
+    ):
+        if value in preflight:
+            raise AssertionError(f"Windows QGA preflight contains mutation: {value}")
+
+    tasks = (ROOT / "roles/windows_qemu_guest_agent/tasks/main.yml").read_text(
+        encoding="utf-8"
+    )
+    required_task_boundaries = {
+        "windows_qemu_guest_agent_source != 'https'",
+        "match('^https://[^/@?#]+",
+        "match('^[A-Fa-f0-9]{64}$')",
+        "ansible.windows.win_get_url:",
+        "validate_certs: true",
+        "checksum_algorithm: sha256",
+        "ansible.windows.win_package:",
+        "verify_signature: true",
+        "Win32_LogicalDisk",
+        "drive_type | int == 5",
+        "ansible.windows.win_reboot:",
+        "ansible.windows.win_service:",
+        "ansible.windows.win_service_info:",
+        "windows_qemu_guest_agent_service_name == 'QEMU-GA'",
+        "windows_qemu_guest_agent_binary.output[0].file_version",
+        "qm agent <vmid> ping",
+    }
+    missing_boundaries = sorted(
+        value for value in required_task_boundaries if value not in tasks
+    )
+    if missing_boundaries:
+        raise AssertionError(
+            f"Windows QGA security/readiness boundary missing: {missing_boundaries}"
+        )
+
+    forbidden_task_patterns = {
+        "validate_certs: false",
+        "verify_signature: false",
+        "ansible.windows.win_shell:",
+        "ansible.windows.win_command:",
+        "ansible.builtin.raw:",
+        "ignore_errors: true",
+        "url_username:",
+        "url_password:",
+        "/latest/",
+    }
+    present = sorted(value for value in forbidden_task_patterns if value in tasks)
+    if present:
+        raise AssertionError(f"unsafe Windows QGA task pattern present: {present}")
+
+    galaxy = (ROOT / "galaxy.yml").read_text(encoding="utf-8")
+    requirements = (ROOT / "requirements.yml").read_text(encoding="utf-8")
+    if 'ansible.windows: \">=3.4.0,<4.0.0\"' not in galaxy:
+        raise AssertionError("collection must declare the supported ansible.windows range")
+    for value in ("name: ansible.windows", "version: 3.6.1"):
+        if value not in requirements:
+            raise AssertionError(f"exact Windows collection lock missing: {value}")
+
+    scenario = (ROOT / "molecule/windows_qga_static/converge.yml").read_text(
+        encoding="utf-8"
+    )
+    for value in (
+        "windows_qemu_guest_agent_source: https",
+        "windows_qemu_guest_agent_source: mounted_iso",
+        "qemu-ga-x86_64.msi",
+    ):
+        if value not in scenario:
+            raise AssertionError(f"Windows QGA static scenario missing: {value}")
+
+    guide = (ROOT / "docs/windows-qemu-guest-agent.md").read_text(encoding="utf-8")
+    for value in (
+        "QGA cannot bootstrap WinRM or OpenSSH",
+        "qm set <vmid> --agent enabled=1",
+        "vioserial",
+        "ansible_connection: winrm",
+        "ansible_connection: ssh",
+        "Proxmox graphical console",
+        "machine credential",
+    ):
+        if value not in guide:
+            raise AssertionError(f"Windows QGA operator guidance missing: {value}")
+
+    public_lab_leaks = []
+    for path in WINDOWS_QGA_REQUIRED_FILES:
+        content = (ROOT / path).read_text(encoding="utf-8")
+        if "192.168.2.126" in content:
+            public_lab_leaks.append(path)
+    if public_lab_leaks:
+        raise AssertionError(f"private lab target leaked into public content: {public_lab_leaks}")
+
+
 def check_integrated_catalog_only() -> None:
     catalog = (ROOT / "catalog/remote-access-ssh-ca.yml").read_text(encoding="utf-8")
     if "direct_wrappers_catalog_eligible: false" not in catalog:
@@ -209,6 +352,7 @@ def main() -> None:
     check_callback_response_schema()
     check_wrappers()
     check_no_private_material()
+    check_windows_qga()
     check_integrated_catalog_only()
     check_ci_boundary()
     print("repository contract checks passed")
