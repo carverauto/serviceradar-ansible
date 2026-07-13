@@ -132,11 +132,39 @@ def check_integrated_catalog_only() -> None:
         raise AssertionError("catalog must not bind a direct wrapper")
 
 
+def check_ci_boundary() -> None:
+    workflow = (ROOT / ".forgejo/workflows/quality.yml").read_text(encoding="utf-8")
+    molecule = workflow.split("  molecule-systemd-sshd:\n", maxsplit=1)[-1]
+
+    required = {
+        "runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]",
+        "persist-credentials: false",
+        "test ! -S /run/forgejo-docker/docker.sock",
+        "test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token",
+        "DOCKER_HOST: unix:///var/run/docker.sock",
+    }
+    missing = sorted(value for value in required if value not in molecule)
+    if missing:
+        raise AssertionError(f"isolated Molecule runner contract missing: {missing}")
+
+    forbidden = {
+        "runs-on: [ubuntu24]",
+        "serviceradar-signing",
+        "pull_request_target",
+        "--privileged",
+        "volumes:",
+    }
+    present = sorted(value for value in forbidden if value in molecule)
+    if present:
+        raise AssertionError(f"unsafe Molecule runner contract present: {present}")
+
+
 def main() -> None:
     check_json()
     check_wrappers()
     check_no_private_material()
     check_integrated_catalog_only()
+    check_ci_boundary()
     print("repository contract checks passed")
 
 

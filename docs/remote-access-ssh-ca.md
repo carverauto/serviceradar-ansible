@@ -177,6 +177,10 @@ Never import a moving branch into a production template.
 
 Public pull-request CI runs only on the versioned, disposable, secretless
 `serviceradar-public-ephemeral-ubuntu-24.04-20260701` runner pool. Molecule uses
-its own pinned Docker-in-Docker sidecar; workflows never mount a trusted host
-Docker socket. Organization runner policy must keep trusted self-hosted labels
-unavailable to fork events even if a pull request modifies workflow YAML.
+a repository-scoped one-job runner inside a disposable VM, then an LXC job with
+its own inner Docker daemon. The runner has no Kubernetes service-account token,
+OpenBao access, signing material, private-LAN egress, persistent workspace, or
+cross-job Docker state. Workflows never mount a trusted host or Kubernetes
+runner Docker socket. Organization runner policy must keep signing and other
+trusted labels unavailable to this public repository even if a pull request
+modifies workflow YAML.

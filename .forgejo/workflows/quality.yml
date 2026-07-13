@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
       - name: Install exact reviewed lint dependencies
         run: |
           set -euo pipefail
@@ -32,7 +34,8 @@ jobs:
           sha256sum dist/*.tar.gz
 
   molecule-systemd-sshd:
-    runs-on: [ubuntu24]
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +43,19 @@ jobs:
     steps:
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare isolated inner Docker
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -eq 0
+          test ! -S /run/forgejo-docker/docker.sock
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            docker.io python3-venv
+          systemctl enable --now docker
+          DOCKER_HOST=unix:///var/run/docker.sock docker info
       - name: Install exact reviewed test dependencies
         run: |
           set -euo pipefail
@@ -47,9 +63,9 @@ jobs:
           .venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r requirements-ci.lock
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      - name: Verify disposable Docker daemon
-        run: docker info
-      - name: Generate an ephemeral uncommitted test CA and run Molecule
+      - name: Generate an ephemeral uncommitted test CA and run pinned Molecule matrix
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
         run: |
           set -euo pipefail
           trap 'molecule destroy -s "${{ matrix.scenario }}" >/dev/null 2>&1 || true' EXIT
