@@ -1,0 +1,52 @@
+---
+plugin: community.proxmox.proxmox
+
+# A reviewed AWX custom credential injects these values. Keep credentials and
+# the private CA distribution mechanism out of SCM and inventory variables.
+url: "{{ lookup('ansible.builtin.env', 'PROXMOX_URL') }}"
+user: "{{ lookup('ansible.builtin.env', 'PROXMOX_USER') }}"
+token_id: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_ID') }}"
+token_secret: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_SECRET') }}"
+
+# REQUESTS_CA_BUNDLE is injected as a temporary AWX credential file. Never
+# replace this with a disabled validate-certs setting or trust a CA fetched from the PVE
+# endpoint being authenticated.
+validate_certs: true
+
+want_facts: true
+qemu_extended_statuses: true
+strict: false
+
+compose:
+  ansible_host: >-
+    (proxmox_agent_interfaces | default([])
+       | rejectattr('name', 'equalto', 'lo')
+       | map(attribute='ip-addresses') | flatten
+       | map('regex_replace', '/.*$', '')
+       | reject('search', ':')
+       | list | first | default(None))
+    or (proxmox_lxc_interfaces | default([])
+          | rejectattr('name', 'equalto', 'lo')
+          | map(attribute='inet') | reject('equalto', None)
+          | map('regex_replace', '/.*$', '')
+          | reject('search', ':')
+          | list | first | default(None))
+
+filters:
+  - "proxmox_status == 'running'"
+  - "proxmox_template | default(false) == false"
+
+keyed_groups:
+  - key: proxmox_node
+    prefix: node
+  - key: proxmox_tags_parsed | default([]) | map('lower') | list
+    prefix: tag
+
+groups:
+  linux: >-
+    proxmox_vmtype == 'lxc'
+    or (proxmox_vmtype == 'qemu' and proxmox_ostype is defined
+        and proxmox_ostype is match('^l[0-9]+$'))
+  windows: >-
+    proxmox_vmtype == 'qemu' and proxmox_ostype is defined
+    and proxmox_ostype is match('^w')

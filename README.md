@@ -1,11 +1,12 @@
 # serviceradar-ansible
 
 Public Apache-2.0 automation for ServiceRadar operators. This repository now
-contains four independent content families:
+contains five independent content families:
 
 - Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
 - Trusted QEMU Guest Agent installation for Windows Proxmox/QEMU guests.
 - Fingerprint-pinned Linux system CA trust for private HTTPS integrations.
+- CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
 ## SSH remote-access enrollment
@@ -116,6 +117,16 @@ public CA inputs immutable in a reviewed AWX job template, disable prompting
 for them, and launch the template from ServiceRadar rather than directly in AWX,
 against the exact canonical device limit. See the
 [role interface](roles/linux_trusted_ca/README.md).
+
+## Proxmox dynamic inventory
+
+`inventory/proxmox.proxmox.yml` discovers running guests with TLS verification
+enabled. The published AWX custom credential type injects a least-privilege API
+token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs in git or
+inventory variables. Use one AWX inventory per Proxmox cluster so reused PVE
+hostnames and VMIDs remain distinct through ServiceRadar's
+controller/inventory/host identity. See the
+[Proxmox inventory guide](docs/proxmox-dynamic-inventory.md).
 
 ## Agent installation content
 

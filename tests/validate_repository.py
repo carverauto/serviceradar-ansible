@@ -56,6 +56,13 @@ LINUX_TRUSTED_CA_REQUIRED_FILES = {
     "roles/linux_trusted_ca/tasks/validate_shape.yml",
 }
 
+PROXMOX_INVENTORY_REQUIRED_FILES = {
+    "inventory/proxmox.proxmox.yml",
+    "docs/proxmox-dynamic-inventory.md",
+    "awx/credential-types/proxmox-api-token-ca/v1/inputs.json",
+    "awx/credential-types/proxmox-api-token-ca/v1/injectors.json",
+}
+
 
 def repository_files(pattern: str = "*"):
     for path in ROOT.rglob(pattern):
@@ -398,6 +405,63 @@ def check_linux_trusted_ca() -> None:
         raise AssertionError(f"unsafe Linux trusted CA pattern present: {present}")
 
 
+def check_proxmox_inventory() -> None:
+    missing = sorted(
+        name for name in PROXMOX_INVENTORY_REQUIRED_FILES if not (ROOT / name).is_file()
+    )
+    if missing:
+        raise AssertionError(f"missing Proxmox inventory content: {missing}")
+
+    inventory = (ROOT / "inventory/proxmox.proxmox.yml").read_text(encoding="utf-8")
+    required = {
+        "plugin: community.proxmox.proxmox",
+        "PROXMOX_URL",
+        "PROXMOX_USER",
+        "PROXMOX_TOKEN_ID",
+        "PROXMOX_TOKEN_SECRET",
+        "validate_certs: true",
+        "want_facts: true",
+        "proxmox_agent_interfaces",
+        "proxmox_lxc_interfaces",
+    }
+    absent = sorted(value for value in required if value not in inventory)
+    if absent:
+        raise AssertionError(f"Proxmox inventory security boundary missing: {absent}")
+    if "validate_certs: false" in inventory:
+        raise AssertionError("Proxmox inventory must never disable TLS verification")
+
+    inputs = json.loads(
+        (
+            ROOT
+            / "awx/credential-types/proxmox-api-token-ca/v1/inputs.json"
+        ).read_text(encoding="utf-8")
+    )
+    injectors = json.loads(
+        (
+            ROOT
+            / "awx/credential-types/proxmox-api-token-ca/v1/injectors.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    fields = {field["id"]: field for field in inputs.get("fields", [])}
+    if set(fields) != {"url", "user", "token_id", "token_secret", "ca_bundle"}:
+        raise AssertionError("Proxmox credential type has an unexpected input surface")
+    if fields["token_secret"].get("secret") is not True:
+        raise AssertionError("Proxmox token secret must be an AWX secret input")
+    if set(inputs.get("required", [])) != set(fields):
+        raise AssertionError("Proxmox credential type must require every reviewed field")
+    if injectors.get("file") != {"template": "{{ ca_bundle }}"}:
+        raise AssertionError("Proxmox CA must use the AWX temporary credential file")
+
+    environment = injectors.get("env", {})
+    if environment.get("REQUESTS_CA_BUNDLE") != "{{ tower.filename }}":
+        raise AssertionError("Proxmox credential must bind requests to the reviewed CA file")
+    if environment.get("PROXMOX_VALIDATE_CERTS") != "true":
+        raise AssertionError("Proxmox credential must force certificate validation")
+    if "PROXMOX_TOKEN_SECRET" not in environment:
+        raise AssertionError("Proxmox token secret injector is missing")
+
+
 def check_integrated_catalog_only() -> None:
     catalog = (ROOT / "catalog/remote-access-ssh-ca.yml").read_text(encoding="utf-8")
     if "direct_wrappers_catalog_eligible: false" not in catalog:
@@ -442,6 +506,7 @@ def main() -> None:
     check_no_private_material()
     check_windows_qga()
     check_linux_trusted_ca()
+    check_proxmox_inventory()
     check_integrated_catalog_only()
     check_ci_boundary()
     print("repository contract checks passed")
