@@ -43,6 +43,19 @@ WINDOWS_QGA_REQUIRED_FILES = {
     "requirements.yml",
 }
 
+LINUX_TRUSTED_CA_REQUIRED_FILES = {
+    "install-linux-trusted-ca.yml",
+    "roles/linux_trusted_ca/README.md",
+    "roles/linux_trusted_ca/defaults/main.yml",
+    "roles/linux_trusted_ca/handlers/main.yml",
+    "roles/linux_trusted_ca/meta/argument_specs.yml",
+    "roles/linux_trusted_ca/meta/main.yml",
+    "roles/linux_trusted_ca/tasks/apply_item.yml",
+    "roles/linux_trusted_ca/tasks/main.yml",
+    "roles/linux_trusted_ca/tasks/validate_item.yml",
+    "roles/linux_trusted_ca/tasks/validate_shape.yml",
+}
+
 
 def repository_files(pattern: str = "*"):
     for path in ROOT.rglob(pattern):
@@ -328,6 +341,63 @@ def check_windows_qga() -> None:
         raise AssertionError(f"private lab target leaked into public content: {public_lab_leaks}")
 
 
+def check_linux_trusted_ca() -> None:
+    missing = sorted(
+        name for name in LINUX_TRUSTED_CA_REQUIRED_FILES if not (ROOT / name).is_file()
+    )
+    if missing:
+        raise AssertionError(f"missing Linux trusted CA content: {missing}")
+
+    wrapper = (ROOT / "install-linux-trusted-ca.yml").read_text(encoding="utf-8")
+    for value in (
+        "hosts: \"{{ target_hosts | default('all') }}\"",
+        "become: true",
+        "role: linux_trusted_ca",
+        "gather_facts: true",
+    ):
+        if value not in wrapper:
+            raise AssertionError(f"Linux trusted CA wrapper contract missing: {value}")
+
+    task_text = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in LINUX_TRUSTED_CA_REQUIRED_FILES
+        if name.endswith((".yml", ".md"))
+    )
+    required = {
+        "CA:TRUE",
+        "sha256_fingerprint",
+        "checksum_algorithm: sha256",
+        "/usr/local/share/ca-certificates",
+        "/etc/pki/ca-trust/source/anchors",
+        "update-ca-certificates",
+        "update-ca-trust",
+        "validate_certs: true",
+        "follow_redirects: none",
+        "use_netrc: false",
+        "use_proxy: false",
+        "openssl\n          - verify",
+        "-partial_chain",
+        "Refresh Linux CA trust",
+        "Restart CA consumers",
+        "state: absent",
+    }
+    absent = sorted(value for value in required if value not in task_text)
+    if absent:
+        raise AssertionError(f"Linux trusted CA security boundary missing: {absent}")
+
+    forbidden = {
+        "validate_certs: false",
+        "get_url:",
+        "url_username:",
+        "url_password:",
+        "-----BEGIN PRIVATE KEY-----",
+        "ignore_errors: true",
+    }
+    present = sorted(value for value in forbidden if value in task_text)
+    if present:
+        raise AssertionError(f"unsafe Linux trusted CA pattern present: {present}")
+
+
 def check_integrated_catalog_only() -> None:
     catalog = (ROOT / "catalog/remote-access-ssh-ca.yml").read_text(encoding="utf-8")
     if "direct_wrappers_catalog_eligible: false" not in catalog:
@@ -371,6 +441,7 @@ def main() -> None:
     check_wrappers()
     check_no_private_material()
     check_windows_qga()
+    check_linux_trusted_ca()
     check_integrated_catalog_only()
     check_ci_boundary()
     print("repository contract checks passed")

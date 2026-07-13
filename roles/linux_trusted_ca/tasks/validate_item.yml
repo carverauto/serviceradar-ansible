@@ -1,0 +1,133 @@
+---
+- name: Validate required present CA fields
+  ansible.builtin.assert:
+    that:
+      - serviceradar_linux_trusted_ca_item.certificate is defined
+      - serviceradar_linux_trusted_ca_item.certificate is string
+      - serviceradar_linux_trusted_ca_item.certificate is search('-----BEGIN CERTIFICATE-----')
+      - serviceradar_linux_trusted_ca_item.certificate is search('-----END CERTIFICATE-----')
+      - serviceradar_linux_trusted_ca_item.certificate is not search('PRIVATE KEY')
+      - >-
+        (serviceradar_linux_trusted_ca_item.certificate | trim)
+        is match('(?s)^-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----$')
+      - >-
+        (serviceradar_linux_trusted_ca_item.certificate
+         | regex_findall('-----BEGIN CERTIFICATE-----')
+         | length) == 1
+      - >-
+        (serviceradar_linux_trusted_ca_item.certificate
+         | regex_findall('-----END CERTIFICATE-----')
+         | length) == 1
+      - serviceradar_linux_trusted_ca_item.sha256_fingerprint is defined
+      - serviceradar_linux_trusted_ca_item.sha256_fingerprint is string
+      - >-
+        serviceradar_linux_trusted_ca_item.sha256_fingerprint
+        | regex_replace(':', '')
+        | lower
+        is match('^[a-f0-9]{64}$')
+    fail_msg: Present CA items require PEM certificate text and a SHA-256 DER fingerprint.
+
+- name: Allocate a private CA validation directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: serviceradar-ca-
+  register: serviceradar_linux_trusted_ca_validation_dir
+  changed_when: false
+  check_mode: false
+
+- name: Validate the staged public CA
+  block:
+    - name: Stage the public CA for validation
+      ansible.builtin.copy:
+        content: "{{ serviceradar_linux_trusted_ca_item.certificate | trim }}\n"
+        dest: "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+        mode: "0600"
+      diff: false
+      changed_when: false
+      check_mode: false
+
+    - name: Parse the CA and enforce its future validity window
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+          - -noout
+          - -checkend
+          - "{{ serviceradar_linux_trusted_ca_checkend_seconds | int | string }}"
+      changed_when: false
+      check_mode: false
+
+    - name: Verify the CA is currently valid as a trust anchor
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -trusted
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+          - -partial_chain
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+      changed_when: false
+      check_mode: false
+
+    - name: Read the CA basic constraints
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+          - -noout
+          - -ext
+          - basicConstraints
+      register: serviceradar_linux_trusted_ca_constraints
+      changed_when: false
+      check_mode: false
+
+    - name: Require a CA certificate
+      ansible.builtin.assert:
+        that:
+          - serviceradar_linux_trusted_ca_constraints.stdout is search('CA:TRUE')
+        fail_msg: The supplied certificate is not marked as a CA.
+
+    - name: Convert the CA to canonical DER for fingerprinting
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.pem"
+          - -outform
+          - DER
+          - -out
+          - "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.der"
+      changed_when: false
+      check_mode: false
+
+    - name: Compute the canonical DER SHA-256 fingerprint
+      ansible.builtin.stat:
+        path: "{{ serviceradar_linux_trusted_ca_validation_dir.path }}/candidate.der"
+        checksum_algorithm: sha256
+      register: serviceradar_linux_trusted_ca_der
+      check_mode: false
+
+    - name: Enforce the pinned CA fingerprint
+      ansible.builtin.assert:
+        that:
+          - >-
+            serviceradar_linux_trusted_ca_der.stat.checksum
+            == (serviceradar_linux_trusted_ca_item.sha256_fingerprint
+                | regex_replace(':', '')
+                | lower)
+        fail_msg: The supplied CA does not match its pinned SHA-256 DER fingerprint.
+  always:
+    - name: Remove the private validation directory
+      ansible.builtin.file:
+        path: "{{ serviceradar_linux_trusted_ca_validation_dir.path }}"
+        state: absent
+      changed_when: false
+      check_mode: false
+      when:
+        - serviceradar_linux_trusted_ca_validation_dir is defined
+        - serviceradar_linux_trusted_ca_validation_dir.path is defined

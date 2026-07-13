@@ -21,6 +21,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - An explicit mounted-ISO-only policy for upstream unsigned QGA MSI builds,
   gated by the exact pinned SHA-256; signed installers remain the default.
 - QEMU-GA service, binary/version, VirtIO serial, and reboot-policy verification.
+- A reusable Linux system-trust role and AWX-visible wrapper for operator-supplied
+  public CAs, with per-host batch pre-validation, DER fingerprint pinning,
+  active CA/expiry validation, check-mode support, bounded consumer restarts,
+  removal, and credential-free verified HTTPS endpoint proofs.
 
 ### Changed
 

@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: ServiceRadar Authors
+  description: Install fingerprint-pinned public CA certificates into Linux system trust.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions: [bookworm]
+    - name: Ubuntu
+      versions: [jammy, noble]
+    - name: EL
+      versions: ["9"]
+dependencies: []

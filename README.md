@@ -1,10 +1,11 @@
 # serviceradar-ansible
 
 Public Apache-2.0 automation for ServiceRadar operators. This repository now
-contains three independent content families:
+contains four independent content families:
 
 - Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
 - Trusted QEMU Guest Agent installation for Windows Proxmox/QEMU guests.
+- Fingerprint-pinned Linux system CA trust for private HTTPS integrations.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
 ## SSH remote-access enrollment
@@ -98,6 +99,24 @@ The repository also includes a reproducible
 `ansible.windows 2.4.0` collection onto AWX EE 24.6.1. This keeps the collection
 inside that AWX release's supported Ansible Core 2.15 runtime.
 
+## Linux private-API CA trust
+
+`install-linux-trusted-ca.yml` installs or removes operator-supplied public CA
+certificates on Debian/Ubuntu or EL 9 hosts. A present certificate must be a
+valid `CA:TRUE` certificate and match its required SHA-256 DER fingerprint.
+The role never fetches a CA from the endpoint it is about to trust and never
+accepts a TLS-disable option. It validates the complete supplied CA set before
+making the first trust-store change and still performs that validation in
+Ansible check mode.
+
+This is intended for edge agents that call private HTTPS integrations such as
+Proxmox. It can restart exact named services after a trust-store change and
+then prove selected HTTPS URLs with normal certificate verification. Keep the
+public CA inputs immutable in a reviewed AWX job template, disable prompting
+for them, and launch the template from ServiceRadar rather than directly in AWX,
+against the exact canonical device limit. See the
+[role interface](roles/linux_trusted_ca/README.md).
+
 ## Agent installation content
 
 Ansible playbooks for installing the [ServiceRadar](https://code.carverauto.dev/carverauto/serviceradar)
@@ -113,6 +132,7 @@ the AWX project sync lists them.
 | `install-agent-debian.yml` | Installs `serviceradar-agent` on Debian/Ubuntu hosts (`apt`, `.deb`). |
 | `install-agent-redhat.yml` | Installs `serviceradar-agent` on RHEL/Rocky/Alma/Fedora hosts (`dnf`/`dnf5`/`yum` via `ansible.builtin.package`, `.rpm`). |
 | `install-qemu-guest-agent-windows.yml` | Installs and verifies QEMU Guest Agent on a pre-bootstrapped Windows QEMU/Proxmox guest. |
+| `install-linux-trusted-ca.yml` | Installs or removes fingerprint-pinned public CA trust and optionally verifies private HTTPS endpoints. |
 | `qemu-guest-agent-windows-preflight.yml` | Read-only discovery of mounted QGA MSI path, SHA-256, and Authenticode status. |
 
 Both installers:

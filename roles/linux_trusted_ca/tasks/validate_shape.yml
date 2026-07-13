@@ -1,0 +1,22 @@
+---
+- name: Validate the CA item contract
+  ansible.builtin.assert:
+    that:
+      - serviceradar_linux_trusted_ca_item is mapping
+      - >-
+        (serviceradar_linux_trusted_ca_item is mapping)
+        and (serviceradar_linux_trusted_ca_item.get('name') is string)
+      - >-
+        (serviceradar_linux_trusted_ca_item is mapping)
+        and (serviceradar_linux_trusted_ca_item.get('name', '')
+             is match('^[a-z0-9][a-z0-9._-]{0,63}$'))
+      - >-
+        (serviceradar_linux_trusted_ca_item is mapping)
+        and (serviceradar_linux_trusted_ca_item.get('state', 'present') in ['present', 'absent'])
+      - >-
+        (serviceradar_linux_trusted_ca_item is mapping)
+        and ((serviceradar_linux_trusted_ca_item.keys() | list
+              | difference(['name', 'state', 'certificate', 'sha256_fingerprint'])
+              | length) == 0)
+    fail_msg: >-
+      CA items require only the documented fields, a safe lowercase name, and present or absent state.

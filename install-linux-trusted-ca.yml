@@ -1,0 +1,10 @@
+---
+# Install fingerprint-pinned public CA certificates on Linux hosts. In AWX,
+# retain target_hosts=all and use the reviewed job-template limit.
+- name: Install fingerprint-pinned Linux CA trust
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: linux_trusted_ca
