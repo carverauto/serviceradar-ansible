@@ -20,6 +20,12 @@ custom credential, in inventory, in a survey, or in extra vars. The role reads
 that system environment value directly and sends it as a JSON integer so
 ServiceRadar can bind the callback to the exact accepted AWX runtime job.
 
+Use only the versioned custom credential artifacts and contract tool described
+in the
+[operator guide](../../docs/awx-ephemeral-callback-credential.md). Repository
+tests require exactly these ten inputs and environment mappings, mark only the
+grant and idempotency key secret, and reject `JOB_ID` in the custom credential.
+
 Do not place these values in inventory, surveys, ordinary extra vars, logs,
 artifacts, fact caches, or support bundles. The role never sends the callback
 response or bearer to a managed host.

@@ -1,0 +1,14 @@
+{
+  "env": {
+    "SERVICERADAR_CALLBACK_URL": "{{ callback_url }}",
+    "SERVICERADAR_CALLBACK_GRANT": "{{ callback_grant }}",
+    "SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY": "{{ callback_idempotency_key }}",
+    "SERVICERADAR_CALLBACK_ALLOWED_ORIGIN": "{{ callback_allowed_origin }}",
+    "SERVICERADAR_CALLBACK_MANIFEST_SHA256": "{{ callback_manifest_sha256 }}",
+    "SERVICERADAR_SCM_REVISION": "{{ scm_revision }}",
+    "SERVICERADAR_CONTENT_SHA256": "{{ content_sha256 }}",
+    "SERVICERADAR_CALLBACK_PHASE": "{{ callback_phase }}",
+    "SERVICERADAR_CALLBACK_OPERATION": "{{ callback_operation }}",
+    "SERVICERADAR_CALLBACK_STATE": "{{ callback_state }}"
+  }
+}

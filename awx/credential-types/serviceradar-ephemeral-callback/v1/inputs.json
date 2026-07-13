@@ -1,0 +1,76 @@
+{
+  "fields": [
+    {
+      "id": "callback_url",
+      "label": "Callback URL",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "callback_grant",
+      "label": "Callback grant",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "callback_idempotency_key",
+      "label": "Callback idempotency key",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "callback_allowed_origin",
+      "label": "Callback allowed origin",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "callback_manifest_sha256",
+      "label": "Callback manifest SHA-256",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "scm_revision",
+      "label": "SCM revision",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "content_sha256",
+      "label": "Content SHA-256",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "callback_phase",
+      "label": "Callback phase",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "callback_operation",
+      "label": "Callback operation",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "callback_state",
+      "label": "Callback state",
+      "type": "string",
+      "secret": false
+    }
+  ],
+  "required": [
+    "callback_url",
+    "callback_grant",
+    "callback_idempotency_key",
+    "callback_allowed_origin",
+    "callback_manifest_sha256",
+    "scm_revision",
+    "content_sha256",
+    "callback_phase",
+    "callback_operation",
+    "callback_state"
+  ]
+}

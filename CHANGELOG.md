@@ -12,6 +12,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Generation-bound staged changes with persistent rollback, fresh-session proof, and commit.
 - Explicit overlap, proof-gated retirement, and destructive removal workflows.
 - A controller-only consumer for one-use ServiceRadar callback grants.
+- Versioned AWX callback credential-type artifacts, a dependency-free canonical
+  digest tool, and a Go-compatible conformance vector.
 - Pinned lint, syntax, secret-scanning, and systemd/sshd Molecule CI definitions.
 - A reusable Windows QEMU Guest Agent role and AWX-visible wrapper.
 - A read-only mounted-MSI path, SHA-256, and Authenticode preflight wrapper.

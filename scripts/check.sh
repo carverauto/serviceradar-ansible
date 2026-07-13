@@ -5,12 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 python3 tests/validate_repository.py
+python3 -m unittest discover -s tests -p 'test_*.py'
 python3 -m py_compile \
   roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-activate \
   roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-metadata-digest \
   roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-policy-digest \
   roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-commit \
+  scripts/awx_callback_credential_contract.py \
   scripts/content_digest.py \
+  tests/test_awx_callback_credential_contract.py \
   tests/validate_repository.py
 bash -n roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-rollback
 python3 scripts/content_digest.py

@@ -29,6 +29,24 @@ content:
     action: remote_access.ssh_ca.bundle.read
     response_schema: serviceradar.remote_access.ssh_ca_bundle/v1
     max_response_bytes: 262144
+    custom_credential_type:
+      name: ServiceRadar Ephemeral Callback v1
+      contract_schema: serviceradar.awx_callback_credential_type
+      contract_version: 1
+      awx_kind: cloud
+      awx_managed: false
+      awx_assigned_id:
+        minimum: 1
+        maximum: 2147483647
+      inputs_artifact: awx/credential-types/serviceradar-ephemeral-callback/v1/inputs.json
+      injectors_artifact: awx/credential-types/serviceradar-ephemeral-callback/v1/injectors.json
+      canonicalizer: scripts/awx_callback_credential_contract.py
+      secret_inputs:
+        - callback_grant
+        - callback_idempotency_key
+      job_id_source: awx_runtime_environment
+      forbidden_custom_environment:
+        - JOB_ID
     permissions:
       required:
         - ansible.runs.launch

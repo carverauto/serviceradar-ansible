@@ -52,6 +52,15 @@ Before the callback, one controller-local task runs for every AWX-limited host
 to materialize the exact host-ID set in AWX without opening a managed-host
 connection; ServiceRadar activates the grant only after that set matches.
 
+Create the exact versioned custom credential type with the published
+[`inputs.json`](awx/credential-types/serviceradar-ephemeral-callback/v1/inputs.json)
+and
+[`injectors.json`](awx/credential-types/serviceradar-ephemeral-callback/v1/injectors.json),
+then generate the ServiceRadar binding digest from AWX's assigned type ID. The
+[operator guide](docs/awx-ephemeral-callback-credential.md) documents the UI/API
+workflow, canonical contract, and cross-language conformance vector. The
+artifacts contain definitions and placeholders only, never a live credential.
+
 Integrated launch requires both `ansible.runs.launch` and
 `devices.remote_access.ssh.ca_bundle.read`. Retirement additionally requires
 `devices.remote_access.ssh.ca_trust.retire` plus a fresh selected-edge login

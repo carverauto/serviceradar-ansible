@@ -147,6 +147,13 @@ in `roles/serviceradar_callback/README.md`. The callback role:
 - attaches only a target's public bundle/principals and non-secret references to
   that exact in-memory inventory host.
 
+Before binding an integrated template, create and fingerprint the exact
+versioned AWX custom credential type from the
+[ephemeral callback credential guide](awx-ephemeral-callback-credential.md).
+The generated digest includes AWX's assigned positive credential type ID and
+the reviewed ten-field input/environment contract. `JOB_ID` remains AWX runtime
+state and must not be added to that credential type.
+
 The bearer and fleet response stay transient in the reviewed execution
 environment. Disable fact caching, job artifacts, support capture, relaunch/copy,
 and backup of the ephemeral credential. Terminal or ambiguous jobs must detach
