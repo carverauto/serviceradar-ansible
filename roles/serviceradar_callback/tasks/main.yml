@@ -39,6 +39,9 @@
         match('^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/api/v1/automation/callback-grants/[A-Za-z0-9._-]+/actions/remote_access\\.ssh_ca\\.bundle\\.read$')
       - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_GRANT') | length >= 32
       - >-
+        lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY') is
+        match('^[A-Za-z0-9._~-]{32,128}$')
+      - >-
         lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_ALLOWED_ORIGIN') is
         match('^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$')
       - >-
@@ -67,6 +70,8 @@
     headers:
       Authorization: >-
         Bearer {{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_GRANT') }}
+      Idempotency-Key: >-
+        {{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY') }}
       Accept: application/json
       Content-Type: application/json
     body_format: json

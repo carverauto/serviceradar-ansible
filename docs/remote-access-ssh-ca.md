@@ -123,11 +123,14 @@ ServiceRadar must create immutable project/template/inventory/credential/host
 bindings and an exact non-empty AWX limit. Only root wrappers listed under
 `integrated_wrappers` in `catalog/remote-access-ssh-ca.yml` are eligible.
 
-The ephemeral custom credential injects the six environment values documented
+The ephemeral custom credential injects the environment values documented
 in `roles/serviceradar_callback/README.md`. The callback role:
 
 - calls the HTTPS server-selected action once with strict TLS, no proxy, no
   redirects, a ten-second timeout, and `no_log`;
+- sends a server-minted idempotency key bound to the exact request so an
+  operator can safely retry only a byte-equivalent request after a lost
+  response; key reuse with different request bytes must fail closed;
 - requires the server and reviewed EE egress boundary to cap the response at
   256 KiB, then performs a second post-receipt size check;
 - compares the response to the injected manifest, SCM revision, content digest,

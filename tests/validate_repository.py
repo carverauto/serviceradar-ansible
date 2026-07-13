@@ -74,6 +74,9 @@ def check_wrappers() -> None:
     )
     if callback.count("ansible.builtin.uri:") != 1:
         raise AssertionError("callback consumer must have exactly one HTTP invocation")
+    for value in ("SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY", "Idempotency-Key"):
+        if value not in callback:
+            raise AssertionError(f"callback idempotency boundary missing: {value}")
     if "^(sr_ra_|sr_callback_|_sr_)" not in integrated:
         raise AssertionError("integrated host set lacks exhaustive reserved-prefix rejection")
 

@@ -6,6 +6,7 @@ credential injects these environment variables:
 
 - `SERVICERADAR_CALLBACK_URL`
 - `SERVICERADAR_CALLBACK_GRANT`
+- `SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY`
 - `SERVICERADAR_CALLBACK_ALLOWED_ORIGIN`
 - `SERVICERADAR_CALLBACK_MANIFEST_SHA256`
 - `SERVICERADAR_SCM_REVISION`
@@ -17,3 +18,8 @@ credential injects these environment variables:
 Do not place these values in inventory, surveys, ordinary extra vars, logs,
 artifacts, fact caches, or support bundles. The role never sends the callback
 response or bearer to a managed host.
+
+The idempotency key is minted with the callback grant and bound to the exact
+request body. It permits only a byte-equivalent replay after an ambiguous lost
+response; it is not a second bearer and cannot authorize another action or
+request body. ServiceRadar must reject key reuse with different request bytes.
