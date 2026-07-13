@@ -48,6 +48,8 @@ content:
       - SERVICERADAR_CALLBACK_PHASE
       - SERVICERADAR_CALLBACK_OPERATION
       - SERVICERADAR_CALLBACK_STATE
+    awx_runtime_environment:
+      - JOB_ID
   integrated_wrappers:
     preflight: remote-access-integrated-preflight.yml
     enroll:

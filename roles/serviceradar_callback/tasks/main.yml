@@ -50,6 +50,7 @@
       - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_MANIFEST_SHA256') is match('^[a-f0-9]{64}$')
       - lookup('ansible.builtin.env', 'SERVICERADAR_SCM_REVISION') is match('^[a-f0-9]{40,64}$')
       - lookup('ansible.builtin.env', 'SERVICERADAR_CONTENT_SHA256') is match('^[a-f0-9]{64}$')
+      - lookup('ansible.builtin.env', 'JOB_ID') is match('^[1-9][0-9]{0,18}$')
       - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') in ['preflight', 'stage', 'verify', 'commit']
       - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') in ['enroll', 'overlap', 'retire', 'remove']
       - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') in ['present', 'absent']
@@ -78,6 +79,7 @@
     body:
       action: remote_access.ssh_ca.bundle.read
       schema_version: serviceradar.remote_access.ssh_ca_bundle/v1
+      job_id: "{{ lookup('ansible.builtin.env', 'JOB_ID') | int }}"
       phase: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') }}"
       operation: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') }}"
       state: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') }}"
@@ -108,6 +110,9 @@
       - sr_callback_response.json is mapping
       - sr_callback_response.json.get('schema_version', '') == 'serviceradar.remote_access.ssh_ca_bundle/v1'
       - sr_callback_response.json.get('action', '') == 'remote_access.ssh_ca.bundle.read'
+      - >-
+        sr_callback_response.json.get('job_id', 0) ==
+        (lookup('ansible.builtin.env', 'JOB_ID') | int)
       - >-
         sr_callback_response.json.get('manifest_sha256', '') ==
         lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_MANIFEST_SHA256')

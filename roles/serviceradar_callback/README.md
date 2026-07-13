@@ -15,6 +15,11 @@ credential injects these environment variables:
 - `SERVICERADAR_CALLBACK_OPERATION`
 - `SERVICERADAR_CALLBACK_STATE`
 
+AWX itself supplies `JOB_ID` for the running job. It is not an input on the
+custom credential, in inventory, in a survey, or in extra vars. The role reads
+that system environment value directly and sends it as a JSON integer so
+ServiceRadar can bind the callback to the exact accepted AWX runtime job.
+
 Do not place these values in inventory, surveys, ordinary extra vars, logs,
 artifacts, fact caches, or support bundles. The role never sends the callback
 response or bearer to a managed host.

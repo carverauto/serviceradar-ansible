@@ -78,6 +78,22 @@ def check_wrappers() -> None:
         if value not in callback:
             raise AssertionError(f"callback idempotency boundary missing: {value}")
     for value in (
+        "lookup('ansible.builtin.env', 'JOB_ID') is match('^[1-9][0-9]{0,18}$')",
+        "job_id: \"{{ lookup('ansible.builtin.env', 'JOB_ID') | int }}\"",
+        "sr_callback_response.json.get('job_id', 0)",
+    ):
+        if value not in callback:
+            raise AssertionError(f"exact AWX runtime job binding missing: {value}")
+
+    catalog = (ROOT / "catalog/remote-access-ssh-ca.yml").read_text(encoding="utf-8")
+    if "awx_runtime_environment:\n      - JOB_ID" not in catalog:
+        raise AssertionError("catalog must identify JOB_ID as AWX runtime state")
+    custom_environment = catalog.split("custom_credential_environment:", 1)[1].split(
+        "awx_runtime_environment:", 1
+    )[0]
+    if "JOB_ID" in custom_environment:
+        raise AssertionError("JOB_ID must not be injected by the custom credential")
+    for value in (
         "status_code: [200, 409]",
         "until: sr_callback_response.status | default(0) == 200",
         "timeout: 5",

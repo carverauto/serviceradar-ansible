@@ -126,6 +126,8 @@ bindings and an exact non-empty AWX limit. Only root wrappers listed under
 The ephemeral custom credential injects the environment values documented
 in `roles/serviceradar_callback/README.md`. The callback role:
 
+- reads AWX's system-provided `JOB_ID` directly, never from a custom credential
+  or playbook variable, and requires the response to echo that exact job;
 - uses one controller-local HTTP task with strict TLS, no proxy, no redirects,
   a five-second per-attempt timeout, `no_log`, and at most thirty attempts;
 - sends a server-minted idempotency key bound to the exact request so an
