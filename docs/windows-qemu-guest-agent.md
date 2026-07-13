@@ -49,6 +49,21 @@ ansible-galaxy collection install -r requirements.yml -p .collections
 required because this role uses `win_package.verify_signature`; it is enabled
 by default and disabled only for the explicit pinned unsigned-ISO policy.
 
+For AWX, build `execution-environment.yml` and register the resulting immutable
+image digest. It starts from the pinned linux/amd64 AWX EE 24.6.1 digest,
+installs the exact collection lock, and fails its image build unless
+`ansible.windows 3.6.1` is present:
+
+```sh
+ansible-builder build \
+  --file execution-environment.yml \
+  --tag registry.example.net/automation/serviceradar-awx-ee:24.6.1-windows-3.6.1
+```
+
+Do not assume AWX's bundled default EE has a recent enough `ansible.windows`.
+Pin the custom EE on the job template and verify its image digest before a
+mutating launch.
+
 ## Secure artifact sources
 
 ### Pinned HTTPS MSI

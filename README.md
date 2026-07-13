@@ -84,6 +84,9 @@ on the exact VM and establish WinRM or Windows OpenSSH first. See the
 [Windows QGA operator guide](docs/windows-qemu-guest-agent.md), the
 [role interface](roles/windows_qemu_guest_agent/README.md), and the non-secret
 [inventory example](examples/windows-qemu-guest-agent-inventory.yml).
+The repository also includes a reproducible
+[`execution-environment.yml`](execution-environment.yml) that layers the pinned
+`ansible.windows 3.6.1` collection onto AWX EE 24.6.1.
 
 ## Agent installation content
 

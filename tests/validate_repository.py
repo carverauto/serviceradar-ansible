@@ -275,11 +275,21 @@ def check_windows_qga() -> None:
 
     galaxy = (ROOT / "galaxy.yml").read_text(encoding="utf-8")
     requirements = (ROOT / "requirements.yml").read_text(encoding="utf-8")
+    execution_environment = (ROOT / "execution-environment.yml").read_text(
+        encoding="utf-8"
+    )
     if 'ansible.windows: \">=3.4.0,<4.0.0\"' not in galaxy:
         raise AssertionError("collection must declare the supported ansible.windows range")
     for value in ("name: ansible.windows", "version: 3.6.1"):
         if value not in requirements:
             raise AssertionError(f"exact Windows collection lock missing: {value}")
+    for value in (
+        "quay.io/ansible/awx-ee@sha256:d6fca88c8c26e143b1fc71cc60db3b0ee06c43cc46fd395e902dcec3dbc5af9b",
+        "galaxy: requirements.yml",
+        "ansible\\.windows[[:space:]]+3\\.6\\.1",
+    ):
+        if value not in execution_environment:
+            raise AssertionError(f"Windows AWX execution environment missing: {value}")
 
     scenario = (ROOT / "molecule/windows_qga_static/converge.yml").read_text(
         encoding="utf-8"
