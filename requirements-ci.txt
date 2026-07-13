@@ -1,0 +1,6 @@
+# Exact versions are the reviewed CI dependency set. Update through a dedicated PR.
+ansible-core==2.17.12
+ansible-lint==25.6.1
+molecule==25.6.0
+molecule-plugins[docker]==23.7.0
+yamllint==1.37.1

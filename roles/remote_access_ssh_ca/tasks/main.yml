@@ -1,0 +1,39 @@
+---
+- name: Validate immutable role ownership boundary
+  ansible.builtin.assert:
+    that:
+      - sr_ra_trusted_ca_path == '/etc/ssh/serviceradar/current/trusted-user-ca-keys.pub'
+      - sr_ra_principals_dir == '/etc/ssh/serviceradar/current/authorized-principals'
+      - sr_ra_sshd_dropin_path == '/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf'
+      - sr_ra_state_dir == '/var/lib/serviceradar/remote-access-ssh-ca'
+      - sr_ra_target_risk == 'standard'
+      - sr_ra_rollback_seconds | int >= 300
+      - sr_ra_rollback_seconds | int <= 3600
+    fail_msg: >-
+      Role-owned paths, target risk, and rollback bounds are fixed security
+      controls and cannot be overridden by inventory, survey, or extra vars.
+
+- name: Validate requested lifecycle combination
+  ansible.builtin.assert:
+    that:
+      - sr_ra_mode in ['direct', 'integrated']
+      - sr_ra_phase in ['preflight', 'stage', 'verify', 'commit']
+      - sr_ra_state in ['present', 'absent']
+      - sr_ra_operation in ['enroll', 'overlap', 'retire', 'remove']
+      - (sr_ra_state == 'absent') == (sr_ra_operation == 'remove')
+    fail_msg: Invalid state/operation combination.
+
+- name: Run fail-closed preflight
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Stage a guarded policy mutation
+  ansible.builtin.include_tasks: stage.yml
+  when: sr_ra_phase == 'stage'
+
+- name: Record a fresh-session verification proof
+  ansible.builtin.include_tasks: verify.yml
+  when: sr_ra_phase == 'verify'
+
+- name: Commit a verified policy generation
+  ansible.builtin.include_tasks: commit.yml
+  when: sr_ra_phase == 'commit'

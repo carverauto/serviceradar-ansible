@@ -1,0 +1,3 @@
+---
+- name: Load direct SSH CA commit workflow
+  ansible.builtin.import_playbook: playbooks/direct-commit.yml

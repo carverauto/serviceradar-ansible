@@ -1,0 +1,61 @@
+---
+name: remote-access-content-quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-syntax:
+    # This label is an organization-enforced disposable, secretless public-PR
+    # sandbox. Trusted self-hosted runner labels are denied to fork events.
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    container:
+      image: >-
+        python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install exact reviewed lint dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir -r requirements-ci.txt
+      - name: Run repository, YAML, Ansible lint, and every wrapper syntax gate
+        run: scripts/check.sh
+      - name: Build collection artifact and record immutable content provenance
+        run: |
+          set -euo pipefail
+          install -d dist
+          ansible-galaxy collection build --force --output-path dist
+          python scripts/content_digest.py
+          sha256sum dist/*.tar.gz
+
+  molecule-systemd-sshd:
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    container:
+      image: >-
+        python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
+    services:
+      docker:
+        image: >-
+          docker:27.5.1-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
+        env:
+          DOCKER_TLS_CERTDIR: ""
+        options: --privileged
+    env:
+      # The privileged daemon is an isolated sidecar on a disposable worker;
+      # the host Docker socket is never mounted into untrusted PR code.
+      DOCKER_HOST: tcp://docker:2375
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [preflight]
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install exact reviewed test dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir -r requirements-ci.txt
+      - name: Generate an ephemeral uncommitted test CA and run Molecule
+        run: |
+          set -euo pipefail
+          trap 'molecule destroy -s "${{ matrix.scenario }}" >/dev/null 2>&1 || true' EXIT
+          molecule test -s "${{ matrix.scenario }}"

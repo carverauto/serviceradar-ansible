@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Print a deterministic digest of the role-owned live SSH policy files."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+CA_PATH = Path("/etc/ssh/serviceradar/current/trusted-user-ca-keys.pub")
+DROPIN_PATH = Path("/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf")
+PRINCIPALS_PATH = Path("/etc/ssh/serviceradar/current/authorized-principals")
+CURRENT_PATH = Path("/etc/ssh/serviceradar/current")
+
+
+def read_regular(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"unsafe role-owned path: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def main() -> None:
+    if CURRENT_PATH.is_symlink():
+        raise RuntimeError(f"unsafe role-owned path: {CURRENT_PATH}")
+    principals: dict[str, str] | None = None
+    if PRINCIPALS_PATH.exists():
+        if PRINCIPALS_PATH.is_symlink() or not PRINCIPALS_PATH.is_dir():
+            raise RuntimeError(f"unsafe role-owned path: {PRINCIPALS_PATH}")
+        principals = {}
+        for path in sorted(PRINCIPALS_PATH.iterdir()):
+            if path.name.startswith("."):
+                raise RuntimeError(f"unexpected hidden principal path: {path}")
+            value = read_regular(path)
+            if value is None:
+                raise RuntimeError(f"unexpected principal path: {path}")
+            principals[path.name] = value
+
+    policy = {
+        "ca_bundle": read_regular(CA_PATH),
+        "principals": principals,
+        "sshd_dropin": read_regular(DROPIN_PATH),
+    }
+    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
+    print(hashlib.sha256(canonical).hexdigest())
+
+
+if __name__ == "__main__":
+    main()

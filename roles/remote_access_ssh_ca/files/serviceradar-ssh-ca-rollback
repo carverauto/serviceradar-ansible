@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly state_dir=/var/lib/serviceradar/remote-access-ssh-ca
+readonly marker="${state_dir}/pending.json"
+readonly current_policy="${state_dir}/current-policy.json"
+readonly lock_file="${state_dir}/transaction.lock"
+readonly dropin_path=/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf
+readonly transaction_id="${1:-}"
+
+mkdir -p "${state_dir}"
+exec 9>"${lock_file}"
+flock -x 9
+
+fail_critical() {
+  local reason="$1"
+  python3 - "${state_dir}/critical-manual-recovery.json" "${transaction_id}" "${reason}" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, transaction_id, reason = sys.argv[1:]
+result = {
+    "schema": "serviceradar.remote_access.critical_manual_recovery/v1",
+    "status": "critical_manual_recovery",
+    "transaction_id": transaction_id,
+    "reason": reason,
+}
+fd, temporary = tempfile.mkstemp(prefix=".critical-", dir=os.path.dirname(path), text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as output:
+    json.dump(result, output, sort_keys=True)
+    output.write("\n")
+    output.flush()
+    os.fsync(output.fileno())
+os.replace(temporary, path)
+PY
+  exit 70
+}
+
+[[ -n "${transaction_id}" ]] || fail_critical "missing_transaction_id"
+[[ -f "${marker}" ]] || exit 0
+
+marker_transaction="$({ python3 - "${marker}" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["transaction_id"])
+PY
+} 2>/dev/null)" || fail_critical "invalid_pending_marker"
+[[ "${marker_transaction}" == "${transaction_id}" ]] || fail_critical "transaction_mismatch"
+
+readonly snapshot="${state_dir}/transactions/${transaction_id}/snapshot"
+[[ -d "${snapshot}" ]] || fail_critical "snapshot_missing"
+
+rm -f -- "${dropin_path}"
+rm -rf -- /etc/ssh/serviceradar
+
+mkdir -p /etc/ssh/sshd_config.d
+if [[ -e "${snapshot}/10-serviceradar-remote-access.conf" ]]; then
+  cp -a -- "${snapshot}/10-serviceradar-remote-access.conf" "${dropin_path}"
+fi
+if [[ -e "${snapshot}/serviceradar" ]]; then
+  cp -a -- "${snapshot}/serviceradar" /etc/ssh/serviceradar
+fi
+rm -f -- "${current_policy}"
+if [[ -e "${snapshot}/current-policy.json" ]]; then
+  cp -a -- "${snapshot}/current-policy.json" "${current_policy}"
+fi
+
+/usr/sbin/sshd -t -f /etc/ssh/sshd_config || fail_critical "restored_sshd_validation_failed"
+prior_state=absent
+expected_files=""
+expected_metadata=""
+if [[ -e "${snapshot}/current-policy.json" ]]; then
+  prior_state=present
+  readarray -t prior_digests < <(python3 - "${snapshot}/current-policy.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    value = json.load(source)
+print(value["live_files_digest"])
+print(value["live_metadata_digest"])
+print(value["state"])
+PY
+)
+  expected_files="${prior_digests[0]}"
+  expected_metadata="${prior_digests[1]}"
+  prior_state="${prior_digests[2]}"
+fi
+actual_files="$(/usr/local/libexec/serviceradar-ssh-ca-policy-digest)" ||
+  fail_critical "restored_content_digest_failed"
+actual_metadata="$(/usr/local/libexec/serviceradar-ssh-ca-metadata-digest "${prior_state}")" ||
+  fail_critical "restored_metadata_digest_failed"
+if [[ -n "${expected_files}" ]]; then
+  [[ "${actual_files}" == "${expected_files}" ]] || fail_critical "restored_content_mismatch"
+  [[ "${actual_metadata}" == "${expected_metadata}" ]] || fail_critical "restored_metadata_mismatch"
+fi
+if systemctl is-active --quiet ssh.service; then
+  systemctl reload ssh.service 2>/dev/null || fail_critical "restored_sshd_reload_failed"
+elif systemctl is-active --quiet sshd.service; then
+  systemctl reload sshd.service 2>/dev/null || fail_critical "restored_sshd_reload_failed"
+else
+  system_state="$(systemctl is-system-running 2>/dev/null || true)"
+  [[ "${system_state}" == starting || "${system_state}" == initializing ]] ||
+    fail_critical "restored_sshd_not_active"
+fi
+
+systemctl disable serviceradar-ssh-ca-rollback.timer >/dev/null 2>&1 || true
+systemctl disable serviceradar-ssh-ca-rollback.service >/dev/null 2>&1 || true
+rm -f -- "${marker}" "${state_dir}/connection-proof.json"
+rm -rf -- "${state_dir}/pending-reservation"
+
+python3 - "${state_dir}/last-rollback.json" "${transaction_id}" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, transaction_id = sys.argv[1:]
+result = {
+    "schema": "serviceradar.remote_access.rollback/v1",
+    "status": "rolled_back",
+    "transaction_id": transaction_id,
+}
+fd, temporary = tempfile.mkstemp(prefix=".rollback-", dir=os.path.dirname(path), text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as output:
+    json.dump(result, output, sort_keys=True)
+    output.write("\n")
+    output.flush()
+    os.fsync(output.fileno())
+os.replace(temporary, path)
+PY

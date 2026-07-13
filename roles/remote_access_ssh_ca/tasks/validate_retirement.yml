@@ -1,0 +1,80 @@
+---
+- name: Read committed overlap policy generation
+  ansible.builtin.slurp:
+    src: "{{ sr_ra_state_dir }}/current-policy.json"
+  register: sr_ra_current_policy_raw
+  changed_when: false
+
+- name: Decode committed overlap policy generation
+  ansible.builtin.set_fact:
+    sr_ra_current_policy: "{{ sr_ra_current_policy_raw.content | b64decode | from_json }}"
+  changed_when: false
+
+- name: Validate proof object for CA retirement
+  ansible.builtin.assert:
+    that:
+      - sr_ra_retirement_proof is mapping
+      - sr_ra_retirement_proof.get('verified', false) is sameas true
+      - sr_ra_retirement_proof.get('target_identity', {}) == sr_ra_target_identity
+      - sr_ra_current_policy.target_identity == sr_ra_target_identity
+      - >-
+        sr_ra_retirement_proof.get('overlap_policy_digest', '') ==
+        sr_ra_current_policy.policy_digest
+      - >-
+        sr_ra_retirement_proof.get('principal_policy_version', '') ==
+        sr_ra_current_policy.principal_policy_version
+      - >-
+        sr_ra_retirement_proof.get('new_ca_fingerprint', '') in
+        (sr_ra_ca_keys | map(attribute='fingerprint') | list)
+      - >-
+        sr_ra_retirement_proof.get('new_ca_fingerprint', '') ==
+        (sr_ra_current_policy.overlap_added_ca_fingerprints | first)
+      - >-
+        sr_ra_ca_keys | map(attribute='fingerprint') | list |
+        difference(sr_ra_current_policy.ca_fingerprints) | length == 0
+      - >-
+        sr_ra_current_policy.ca_fingerprints |
+        difference(sr_ra_ca_keys | map(attribute='fingerprint') | list) | length > 0
+      - >-
+        sr_ra_current_policy.overlap_added_ca_fingerprints |
+        difference(sr_ra_ca_keys | map(attribute='fingerprint') | list) | length == 0
+      - sr_ra_retirement_proof.get('fresh_until', '') | length > 0
+      - >-
+        sr_ra_retirement_proof.get('fresh_until_epoch', 0) | int >
+        ansible_date_time.epoch | int
+      - >-
+        sr_ra_retirement_proof.get('fresh_until_epoch', 0) | int <=
+        (ansible_date_time.epoch | int) + 3600
+    fail_msg: >-
+      Retirement requires a current, target-bound independent new-CA login proof.
+
+- name: Validate proof authority for this security mode
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sr_ra_mode == 'integrated' and
+         sr_ra_retirement_proof.get('kind', '') == 'serviceradar_selected_edge_ca_login' and
+         sr_ra_retirement_proof.get('route_id', '') | length > 0) or
+        (sr_ra_mode == 'direct' and
+         sr_ra_retirement_proof.get('kind', '') == 'controller_new_ca_ssh_login' and
+         sr_ra_retirement_proof.get('controller_proof_id', '') | length > 0)
+    fail_msg: Direct and integrated retirement proofs are not interchangeable.
+
+- name: Validate direct retiring and remaining fingerprint confirmation
+  ansible.builtin.assert:
+    that:
+      - sr_ra_direct_confirmation.get('retiring_fingerprints', []) | length > 0
+      - >-
+        sr_ra_direct_confirmation.get('remaining_fingerprints', []) | sort ==
+        (sr_ra_ca_keys | map(attribute='fingerprint') | list | sort)
+      - >-
+        sr_ra_direct_confirmation.get('retiring_fingerprints', []) |
+        intersect(sr_ra_direct_confirmation.get('remaining_fingerprints', [])) |
+        length == 0
+      - >-
+        sr_ra_direct_confirmation.get('retiring_fingerprints', []) | sort ==
+        (sr_ra_current_policy.ca_fingerprints |
+         difference(sr_ra_ca_keys | map(attribute='fingerprint') | list) | sort)
+    fail_msg: >-
+      Direct retirement must explicitly name disjoint retiring and remaining fingerprints.
+  when: sr_ra_mode == 'direct'

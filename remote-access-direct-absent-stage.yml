@@ -1,0 +1,3 @@
+---
+- name: Load direct SSH CA offboarding workflow
+  ansible.builtin.import_playbook: playbooks/direct-absent-stage.yml

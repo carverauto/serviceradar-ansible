@@ -1,0 +1,27 @@
+---
+- name: Run read-only direct preflight against real sshd fixtures
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    molecule_ca_public_path: >-
+      {{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/test-ca.pub
+    sr_ra_mode: direct
+    sr_ra_phase: preflight
+    sr_ra_state: present
+    sr_ra_operation: enroll
+    sr_ra_target_identity:
+      operator_target_id: "{{ inventory_hostname }}"
+    sr_ra_ca_keys:
+      - id: ephemeral-ci
+        public_key: "{{ lookup('ansible.builtin.file', molecule_ca_public_path) }}"
+        fingerprint: >-
+          {{ lookup('ansible.builtin.pipe',
+                    'ssh-keygen -E sha256 -lf ' ~ (molecule_ca_public_path | quote)) |
+             regex_findall('SHA256:[A-Za-z0-9+/]+') | first }}
+    sr_ra_accounts:
+      - name: srtest
+        principals:
+          - "srp_v1_{{ inventory_hostname | hash('sha256') | truncate(32, true, '') }}"
+  roles:
+    - role: remote_access_ssh_ca

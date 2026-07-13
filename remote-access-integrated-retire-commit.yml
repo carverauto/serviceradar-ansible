@@ -1,0 +1,16 @@
+---
+- name: Bind this wrapper to integrated retirement commit
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Require callback credential intent for this exact wrapper
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') == 'commit'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') == 'present'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') == 'retire'
+      run_once: true
+      delegate_to: localhost
+
+- name: Load integrated retirement commit
+  ansible.builtin.import_playbook: playbooks/integrated.yml

@@ -1,0 +1,3 @@
+---
+- name: Load direct SSH CA overlap workflow
+  ansible.builtin.import_playbook: playbooks/direct-overlap-stage.yml

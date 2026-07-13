@@ -1,0 +1,12 @@
+{{ {
+  'schema': 'serviceradar.remote_access.ssh_connection_proof/v1',
+  'transaction_id': sr_ra_transaction['id'],
+  'generation': sr_ra_transaction['generation'],
+  'policy_digest': sr_ra_pending_marker.policy_digest,
+  'live_files_digest': sr_ra_live_files_digest.stdout | trim,
+  'live_metadata_digest': sr_ra_live_metadata_digest.stdout | trim,
+  'target_identity': sr_ra_target_identity,
+  'machine_credential_ref': sr_ra_transaction['machine_credential_ref'],
+  'verification_job_id': sr_ra_transaction['verification_job_id'],
+  'verified_at': ansible_date_time.iso8601
+} | to_nice_json }}

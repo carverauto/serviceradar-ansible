@@ -1,5 +1,68 @@
 # serviceradar-ansible
 
+Public Apache-2.0 automation for ServiceRadar operators. This repository now
+contains two independent content families:
+
+- Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
+- Existing ServiceRadar agent installation and AWX connectivity playbooks.
+
+## SSH remote-access enrollment
+
+The `serviceradar.remote_access` collection-compatible layout installs only
+public SSH user-CA trust and target-specific principals. It never contains,
+requests, or transports a CA private key. It also does not create accounts or
+change passwords, PAM, LDAP, sudo, host keys, or unrelated sshd policy.
+
+The safe lifecycle is intentionally split across AWX jobs:
+
+1. `preflight` validates OS, systemd/sshd layout, conflicts, accounts, public
+   key fingerprints, FIPS compatibility, and effective Match contexts without
+   changing the host.
+2. `stage` snapshots all role-owned state, validates a complete candidate,
+   atomically activates it, arms a persistent boot/deadline rollback guard,
+   validates the live daemon, and reloads (never restarts) sshd.
+3. `verify` runs as a separate SSH job with the snapshotted machine-credential
+   reference and writes a target/transaction/generation/files-digest proof.
+4. `commit` compares that proof under the same host lock used by rollback,
+   then disarms the guard. A missing or failed verify/commit rolls back.
+
+Supported targets are Ubuntu 22.04/24.04, Debian 12, and Rocky Linux 9 with a
+single non-socket-activated systemd ssh/sshd instance and the standard
+`/etc/ssh/sshd_config.d/*.conf` include. The first release fails closed on
+unknown layouts and higher-risk targets such as hypervisors.
+
+### Security modes
+
+`remote-access-direct-*.yml` wrappers are for operator-managed controllers.
+They accept explicit per-host public material and make no ServiceRadar RBAC,
+audit, canonical identity, or readiness claim.
+
+`remote-access-integrated-*.yml` wrappers are the only catalog-eligible paths.
+They call `remote_access.ssh_ca.bundle.read` once on the reviewed AWX execution
+environment using a one-use custom credential. They verify exact play-host and
+immutable `(controller, inventory, AWX host ID, canonical device UID)` tuple set
+equality before gathering target facts. Direct inputs cannot downgrade an
+integrated wrapper. The callback bearer and fleet response are never sent to a
+managed host or written to facts, artifacts, relaunch data, or logs.
+
+Integrated launch requires both `ansible.runs.launch` and
+`devices.remote_access.ssh.ca_bundle.read`. Retirement additionally requires
+`devices.remote_access.ssh.ca_trust.retire` plus a fresh selected-edge login
+proof from the new CA. Removal additionally requires
+`devices.remote_access.ssh.ca_trust.remove`.
+
+See [the operator guide](docs/remote-access-ssh-ca.md),
+[`catalog/remote-access-ssh-ca.yml`](catalog/remote-access-ssh-ca.yml), and the
+non-secret examples in `examples/`. Production imports must pin a reviewed
+commit and content SHA256; do not bind AWX to a moving branch.
+
+The initial catalog metadata is deliberately gated with
+`production_import_ready: false`. Do not bind these integrated wrappers to a
+live ServiceRadar/AWX instance until the mutation/rollback matrix and the
+separate callback-grant and hardened-targeting dependencies pass together.
+
+## Agent installation content
+
 Ansible playbooks for installing the [ServiceRadar](https://code.carverauto.dev/carverauto/serviceradar)
 agent on managed hosts. This repository is registered as a git playbook
 project in ServiceRadar/AWX; all playbooks live at the repository root so

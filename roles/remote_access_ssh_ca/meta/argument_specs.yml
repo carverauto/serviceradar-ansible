@@ -1,0 +1,69 @@
+---
+argument_specs:
+  main:
+    short_description: Execute one SSH CA enrollment lifecycle phase.
+    options:
+      sr_ra_mode:
+        type: str
+        required: true
+        choices: [direct, integrated]
+      sr_ra_phase:
+        type: str
+        required: true
+        choices: [preflight, stage, verify, commit]
+      sr_ra_state:
+        type: str
+        choices: [present, absent]
+        default: present
+      sr_ra_operation:
+        type: str
+        choices: [enroll, overlap, retire, remove]
+        default: enroll
+      sr_ra_ca_keys:
+        type: list
+        elements: dict
+        default: []
+        options:
+          id:
+            type: str
+            required: true
+          public_key:
+            type: str
+            required: true
+          fingerprint:
+            type: str
+            required: true
+      sr_ra_accounts:
+        type: list
+        elements: dict
+        default: []
+        options:
+          name:
+            type: str
+            required: true
+          principals:
+            type: list
+            elements: str
+            required: true
+      sr_ra_target_identity:
+        type: dict
+        required: true
+      sr_ra_transaction:
+        type: dict
+        default: {}
+      sr_ra_authorization:
+        type: dict
+        default: {}
+      sr_ra_direct_confirmation:
+        type: dict
+        default: {}
+      sr_ra_retirement_proof:
+        type: dict
+        default: {}
+      sr_ra_rollback_seconds:
+        type: int
+        default: 600
+      sr_ra_target_risk:
+        type: str
+        choices: [standard]
+        default: standard

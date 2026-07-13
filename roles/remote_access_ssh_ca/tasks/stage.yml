@@ -1,0 +1,454 @@
+---
+- name: Validate stage transaction envelope
+  ansible.builtin.assert:
+    that:
+      - sr_ra_transaction is mapping
+      - sr_ra_transaction.get('id', '') is match('^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$')
+      - sr_ra_transaction.get('stage_job_id', '') | string | length > 0
+      - sr_ra_transaction.get('generation', '') is match('^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$')
+      - sr_ra_transaction.get('machine_credential_ref', '') | length > 0
+      - >-
+        sr_ra_transaction.get('stage_job_id', '') | string is
+        match('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
+      - >-
+        sr_ra_transaction.get('machine_credential_ref', '') is
+        match('^(awx|controller)-credential-ref:[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$')
+    fail_msg: >-
+      Stage requires a unique transaction ID, generation, stage job ID, and
+      opaque SSH machine-credential reference. Credential values are forbidden.
+
+- name: Inspect current role-owned policy files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop:
+    - "{{ sr_ra_trusted_ca_path }}"
+    - "{{ sr_ra_sshd_dropin_path }}"
+    - "{{ sr_ra_principals_dir }}"
+    - "{{ sr_ra_state_dir }}/pending.json"
+    - "{{ sr_ra_state_dir }}/pending-reservation"
+    - "{{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}"
+    - "{{ sr_ra_state_dir }}/current-policy.json"
+  register: sr_ra_owned_stats
+
+- name: Reject a concurrent pending transaction
+  ansible.builtin.assert:
+    that:
+      - not (sr_ra_owned_stats.results[3].stat.exists | default(false))
+      - not (sr_ra_owned_stats.results[4].stat.exists | default(false))
+      - not (sr_ra_owned_stats.results[5].stat.exists | default(false))
+    fail_msg: >-
+      Another uncommitted SSH policy mutation exists. Verify/commit it or let
+      its rollback guard reconcile the target before staging a new generation.
+
+- name: Find current role-owned principal files
+  ansible.builtin.find:
+    paths: "{{ sr_ra_principals_dir }}"
+    file_type: file
+    recurse: false
+    follow: false
+  register: sr_ra_current_principal_files
+  when: sr_ra_owned_stats.results[2].stat.isdir | default(false)
+
+- name: Read current role-owned principal files
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ sr_ra_current_principal_files.files | default([]) }}"
+  register: sr_ra_current_principal_content
+  changed_when: false
+
+- name: Build current principal-content map
+  ansible.builtin.set_fact:
+    sr_ra_current_principals: >-
+      {{ sr_ra_current_principals | default({}) |
+         combine({item.source | basename: item.content | b64decode}) }}
+  loop: "{{ sr_ra_current_principal_content.results | default([]) }}"
+  changed_when: false
+
+- name: Check exact current role-owned security metadata
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/serviceradar-ssh-ca-metadata-digest, present]
+  register: sr_ra_current_metadata
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - sr_ra_state == 'present'
+    - sr_ra_transition_state.results[0].stat.isreg | default(false)
+
+- name: Check current SELinux labels against system policy without changing them
+  ansible.builtin.command:
+    argv: [restorecon, -nRv, /etc/ssh/serviceradar, "{{ sr_ra_sshd_dropin_path }}"]
+  register: sr_ra_current_selinux_drift
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - sr_ra_state == 'present'
+    - sr_ra_transition_state.results[0].stat.isreg | default(false)
+    - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
+
+- name: Calculate exact role-owned policy delta
+  ansible.builtin.set_fact:
+    sr_ra_policy_change_needed: >-
+      {% if sr_ra_state == 'absent' %}
+      {{ (sr_ra_owned_stats.results[0].stat.exists | default(false)) or
+         (sr_ra_owned_stats.results[1].stat.exists | default(false)) or
+         (sr_ra_owned_stats.results[2].stat.exists | default(false)) }}
+      {% else %}
+      {{ not (
+        (sr_ra_current_metadata.rc | default(1)) == 0 and
+        (ansible_facts['selinux']['status'] | default('disabled') != 'enabled' or
+         ((sr_ra_current_selinux_drift.rc | default(1)) == 0 and
+          (sr_ra_current_selinux_drift.stdout | default('') | trim | length) == 0)) and
+        (sr_ra_owned_stats.results[0].stat.isreg | default(false)) and
+        sr_ra_owned_stats.results[0].stat.checksum == (sr_ra_desired_ca_bundle | hash('sha256')) and
+        sr_ra_owned_stats.results[0].stat.pw_name | default('') == 'root' and
+        sr_ra_owned_stats.results[0].stat.gr_name | default('') == 'root' and
+        sr_ra_owned_stats.results[0].stat.mode | default('') == '0644' and
+        (sr_ra_owned_stats.results[1].stat.isreg | default(false)) and
+        sr_ra_owned_stats.results[1].stat.checksum == (sr_ra_desired_sshd_dropin | hash('sha256')) and
+        sr_ra_owned_stats.results[1].stat.pw_name | default('') == 'root' and
+        sr_ra_owned_stats.results[1].stat.gr_name | default('') == 'root' and
+        sr_ra_owned_stats.results[1].stat.mode | default('') == '0644' and
+        (sr_ra_owned_stats.results[2].stat.isdir | default(false)) and
+        sr_ra_owned_stats.results[2].stat.pw_name | default('') == 'root' and
+        sr_ra_owned_stats.results[2].stat.gr_name | default('') == 'root' and
+        sr_ra_owned_stats.results[2].stat.mode | default('') == '0755' and
+        (sr_ra_current_principal_files.files | default([]) |
+         rejectattr('pw_name', 'equalto', 'root') | list | length == 0) and
+        (sr_ra_current_principal_files.files | default([]) |
+         rejectattr('gr_name', 'equalto', 'root') | list | length == 0) and
+        (sr_ra_current_principal_files.files | default([]) |
+         rejectattr('mode', 'equalto', '0644') | list | length == 0) and
+        (sr_ra_current_principals | default({})) == sr_ra_desired_principals) }}
+      {% endif %}
+  changed_when: false
+
+- name: Report exact check-mode mutation plan
+  ansible.builtin.debug:
+    msg:
+      status: planned
+      operation: "{{ sr_ra_operation }}"
+      state: "{{ sr_ra_state }}"
+      policy_digest: "{{ sr_ra_policy_digest | default('absent') }}"
+      owned_paths:
+        - "{{ sr_ra_trusted_ca_path }}"
+        - "{{ sr_ra_principals_dir }}"
+        - "{{ sr_ra_sshd_dropin_path }}"
+  changed_when: sr_ra_policy_change_needed | bool
+  when: ansible_check_mode
+
+- name: Report already-converged policy
+  ansible.builtin.debug:
+    msg:
+      status: unchanged
+      policy_digest: "{{ sr_ra_policy_digest | default('absent') }}"
+  when: not (sr_ra_policy_change_needed | bool)
+
+- name: Execute guarded stage transaction
+  when:
+    - not ansible_check_mode
+    - sr_ra_policy_change_needed | bool
+  block:
+    - name: Create protected transaction directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /var/lib/serviceradar, mode: "0755"}
+        - {path: /usr/local/libexec, mode: "0755"}
+        - {path: "{{ sr_ra_state_dir }}", mode: "0700"}
+        - {path: "{{ sr_ra_state_dir }}/transactions", mode: "0700"}
+        - path: "{{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}"
+          mode: "0700"
+        - path: "{{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/snapshot"
+          mode: "0700"
+        - path: "{{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate"
+          mode: "0700"
+
+    - name: Acquire the one-pending-mutation reservation atomically
+      ansible.builtin.command:
+        argv: [mkdir, "{{ sr_ra_state_dir }}/pending-reservation"]
+      register: sr_ra_reservation_acquired
+      changed_when: sr_ra_reservation_acquired.rc == 0
+
+    - name: Bind the stage reservation to this transaction
+      ansible.builtin.copy:
+        dest: "{{ sr_ra_state_dir }}/pending-reservation/transaction-id"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ sr_ra_transaction['id'] }}\n"
+
+    - name: Snapshot complete role-owned policy tree with ACL and SELinux metadata
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - --preserve=all
+          - --
+          - /etc/ssh/serviceradar
+          - >-
+            {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/snapshot/serviceradar
+      changed_when: true
+      when: sr_ra_path_stats.results[4].stat.isdir | default(false)
+
+    - name: Snapshot existing sshd drop-in with ACL and SELinux metadata
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - --preserve=all
+          - --
+          - "{{ sr_ra_sshd_dropin_path }}"
+          - >-
+            {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/snapshot/10-serviceradar-remote-access.conf
+      changed_when: true
+      when: sr_ra_owned_stats.results[1].stat.isreg | default(false)
+
+    - name: Snapshot prior committed policy metadata
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - --preserve=all
+          - --
+          - "{{ sr_ra_state_dir }}/current-policy.json"
+          - >-
+            {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/snapshot/current-policy.json
+      changed_when: true
+      when: sr_ra_owned_stats.results[6].stat.isreg | default(false)
+
+    - name: Create candidate sshd drop-in directory
+      ansible.builtin.file:
+        path: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Copy unmanaged drop-ins into isolated candidate tree
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/sshd_config.d/{{ item.path | basename }}
+        remote_src: true
+        mode: preserve
+      loop: "{{ sr_ra_sshd_dropins.files }}"
+      when: item.path != sr_ra_sshd_dropin_path
+
+    - name: Render isolated candidate main configuration
+      ansible.builtin.copy:
+        dest: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/sshd_config
+        owner: root
+        group: root
+        mode: "0600"
+        content: >-
+          {{ sr_ra_main_sshd_config.content | b64decode |
+             regex_replace(
+               '(?im)^\\s*Include\\s+/etc/ssh/sshd_config\\.d/\\*\\.conf\\s*$',
+               'Include ' ~ sr_ra_state_dir ~ '/transactions/' ~
+               sr_ra_transaction['id'] ~ '/candidate/sshd_config.d/*.conf') }}
+
+    - name: Create isolated candidate public policy tree
+      ansible.builtin.file:
+        path: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/serviceradar/authorized-principals
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: sr_ra_state == 'present'
+
+    - name: Render candidate public CA bundle
+      ansible.builtin.copy:
+        dest: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/serviceradar/trusted-user-ca-keys.pub
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ sr_ra_desired_ca_bundle }}"
+      when: sr_ra_state == 'present'
+
+    - name: Render candidate principal files
+      ansible.builtin.copy:
+        dest: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/serviceradar/authorized-principals/{{ item.key }}
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ item.value }}"
+      loop: "{{ sr_ra_desired_principals | dict2items }}"
+      when: sr_ra_state == 'present'
+
+    - name: Render candidate sshd policy
+      ansible.builtin.copy:
+        dest: >-
+          {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/sshd_config.d/10-serviceradar-remote-access.conf
+        owner: root
+        group: root
+        mode: "0600"
+        content: |-
+          # Candidate generated by ServiceRadar Ansible content.
+          TrustedUserCAKeys {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/serviceradar/trusted-user-ca-keys.pub
+          AuthorizedPrincipalsFile {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/serviceradar/authorized-principals/%u
+      when: sr_ra_state == 'present'
+
+    - name: Validate complete isolated candidate sshd syntax
+      ansible.builtin.command:
+        argv:
+          - "{{ sr_ra_sshd_binary }}"
+          - -t
+          - -f
+          - >-
+            {{ sr_ra_state_dir }}/transactions/{{ sr_ra_transaction['id'] }}/candidate/sshd_config
+      changed_when: false
+
+    - name: Calculate absolute UTC rollback deadline
+      ansible.builtin.command:
+        argv:
+          - date
+          - --utc
+          - --date
+          - "+{{ sr_ra_rollback_seconds }} seconds"
+          - +%Y-%m-%dT%H:%M:%SZ
+      register: sr_ra_rollback_deadline
+      changed_when: false
+
+    - name: Install credential-free rollback helper
+      ansible.builtin.copy:
+        src: serviceradar-ssh-ca-rollback
+        dest: /usr/local/libexec/serviceradar-ssh-ca-rollback
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install live-policy digest helper
+      ansible.builtin.copy:
+        src: serviceradar-ssh-ca-policy-digest
+        dest: /usr/local/libexec/serviceradar-ssh-ca-policy-digest
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install live-policy metadata validator and digest helper
+      ansible.builtin.copy:
+        src: serviceradar-ssh-ca-metadata-digest
+        dest: /usr/local/libexec/serviceradar-ssh-ca-metadata-digest
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install race-safe commit helper
+      ansible.builtin.copy:
+        src: serviceradar-ssh-ca-commit
+        dest: /usr/local/libexec/serviceradar-ssh-ca-commit
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install lock-held atomic activation helper
+      ansible.builtin.copy:
+        src: serviceradar-ssh-ca-activate
+        dest: /usr/local/libexec/serviceradar-ssh-ca-activate
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write generation-bound pending marker atomically
+      ansible.builtin.template:
+        src: pending.json.j2
+        dest: "{{ sr_ra_state_dir }}/pending.json"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install boot recovery unit
+      ansible.builtin.template:
+        src: rollback.service.j2
+        dest: /etc/systemd/system/serviceradar-ssh-ca-rollback.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install persistent absolute-deadline timer
+      ansible.builtin.template:
+        src: rollback.timer.j2
+        dest: /etc/systemd/system/serviceradar-ssh-ca-rollback.timer
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable boot recovery without starting it
+      ansible.builtin.systemd_service:
+        name: serviceradar-ssh-ca-rollback.service
+        enabled: true
+        daemon_reload: true
+
+    - name: Arm persistent rollback deadline
+      ansible.builtin.systemd_service:
+        name: serviceradar-ssh-ca-rollback.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Activate and validate the complete policy while holding the rollback lock
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/serviceradar-ssh-ca-activate
+          - "{{ sr_ra_transaction['id'] }}"
+      register: sr_ra_activation_result
+      changed_when: sr_ra_activation_result.rc == 0
+
+    - name: Report staged generation awaiting fresh-session verification
+      ansible.builtin.debug:
+        msg:
+          status: staged
+          transaction_id: "{{ sr_ra_transaction['id'] }}"
+          generation: "{{ sr_ra_transaction['generation'] }}"
+          policy_digest: "{{ sr_ra_policy_digest | default('absent') }}"
+          rollback_deadline_utc: "{{ sr_ra_rollback_deadline.stdout | trim }}"
+
+  rescue:
+    - name: Determine whether mutation guard had been armed
+      ansible.builtin.stat:
+        path: "{{ sr_ra_state_dir }}/pending.json"
+        follow: false
+      register: sr_ra_pending_after_failure
+
+    - name: Release this reservation after a pre-mutation failure
+      ansible.builtin.file:
+        path: "{{ sr_ra_state_dir }}/pending-reservation"
+        state: absent
+      when:
+        - not (sr_ra_pending_after_failure.stat.isreg | default(false))
+        - sr_ra_reservation_acquired.rc | default(1) == 0
+
+    - name: Restore the exact prior policy generation immediately
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/serviceradar-ssh-ca-rollback
+          - "{{ sr_ra_transaction['id'] }}"
+      register: sr_ra_immediate_rollback
+      changed_when: sr_ra_immediate_rollback.rc == 0
+      failed_when: false
+      when: sr_ra_pending_after_failure.stat.isreg | default(false)
+
+    - name: Emit machine-readable stage failure result
+      ansible.builtin.fail:
+        msg: >-
+          {{ {'schema': 'serviceradar.remote_access.stage_failure/v1',
+              'status': ('failed_before_mutation'
+                         if not (sr_ra_pending_after_failure.stat.isreg | default(false))
+                         else ('rolled_back'
+                               if (sr_ra_immediate_rollback.rc | default(1)) == 0
+                               else 'critical_manual_recovery')),
+              'transaction_id': sr_ra_transaction['id'],
+              'target_identity': sr_ra_target_identity} | to_json }}

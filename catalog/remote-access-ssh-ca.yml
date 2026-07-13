@@ -1,0 +1,81 @@
+---
+schema_version: serviceradar.automation.catalog/v1
+content:
+  id: serviceradar.remote_access.ssh_ca
+  version: 1
+  license: Apache-2.0
+  release_gate:
+    production_import_ready: false
+    blockers:
+      - Complete and pass real-SSH stage, verify, commit, rollback, rotation, and removal CI matrix.
+      - Bind and test the approved ServiceRadar callback grant and hardened AWX targeting implementations.
+      - Record reviewed immutable SCM, content, collection, execution-environment, and fixture digests.
+  immutable_import:
+    require_scm_commit: true
+    require_content_sha256: true
+    reject_moving_revision: true
+  supported_targets:
+    - distribution: Ubuntu
+      versions: ["22.04", "24.04"]
+    - distribution: Debian
+      versions: ["12"]
+    - distribution: Rocky
+      versions: ["9"]
+  transport:
+    connection_plugin: ansible.builtin.ssh
+    machine_credential_required: true
+    become: true
+  callback:
+    action: remote_access.ssh_ca.bundle.read
+    response_schema: serviceradar.remote_access.ssh_ca_bundle/v1
+    max_response_bytes: 262144
+    permissions:
+      required:
+        - ansible.runs.launch
+        - devices.remote_access.ssh.ca_bundle.read
+      retirement:
+        - devices.remote_access.ssh.ca_trust.retire
+      removal:
+        - devices.remote_access.ssh.ca_trust.remove
+    custom_credential_environment:
+      - SERVICERADAR_CALLBACK_URL
+      - SERVICERADAR_CALLBACK_GRANT
+      - SERVICERADAR_CALLBACK_ALLOWED_ORIGIN
+      - SERVICERADAR_CALLBACK_MANIFEST_SHA256
+      - SERVICERADAR_SCM_REVISION
+      - SERVICERADAR_CONTENT_SHA256
+      - SERVICERADAR_CALLBACK_PHASE
+      - SERVICERADAR_CALLBACK_OPERATION
+      - SERVICERADAR_CALLBACK_STATE
+  integrated_wrappers:
+    preflight: remote-access-integrated-preflight.yml
+    enroll:
+      stage: remote-access-integrated-stage.yml
+      verify: remote-access-integrated-enroll-verify.yml
+      commit: remote-access-integrated-enroll-commit.yml
+    overlap:
+      stage: remote-access-integrated-overlap-stage.yml
+      verify: remote-access-integrated-overlap-verify.yml
+      commit: remote-access-integrated-overlap-commit.yml
+    retire:
+      stage: remote-access-integrated-retire-stage.yml
+      verify: remote-access-integrated-retire-verify.yml
+      commit: remote-access-integrated-retire-commit.yml
+    remove:
+      stage: remote-access-integrated-absent-stage.yml
+      verify: remote-access-integrated-absent-verify.yml
+      commit: remote-access-integrated-absent-commit.yml
+  direct_wrappers_catalog_eligible: false
+  check_mode:
+    preflight: read_only
+    stage: exact_plan_without_write_or_reload
+    verify: unsupported
+    commit: unsupported
+  output_statuses:
+    - eligible
+    - unchanged
+    - staged
+    - verified
+    - committed
+    - rolled_back
+    - critical_manual_recovery

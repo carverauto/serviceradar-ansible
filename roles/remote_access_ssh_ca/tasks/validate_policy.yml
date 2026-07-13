@@ -1,0 +1,184 @@
+---
+- name: Validate non-empty public CA and account lists
+  ansible.builtin.assert:
+    that:
+      - sr_ra_ca_keys is sequence
+      - sr_ra_ca_keys is not string
+      - sr_ra_ca_keys | length > 0
+      - sr_ra_accounts is sequence
+      - sr_ra_accounts is not string
+      - sr_ra_accounts | length > 0
+      - sr_ra_ca_keys | map(attribute='id') | unique | length == sr_ra_ca_keys | length
+      - >-
+        sr_ra_ca_keys | map(attribute='fingerprint') | unique | length ==
+        sr_ra_ca_keys | length
+      - sr_ra_accounts | map(attribute='name') | unique | length == sr_ra_accounts | length
+    fail_msg: >-
+      Present state requires non-empty, duplicate-free CA and existing-account lists.
+
+- name: Validate public CA record syntax
+  ansible.builtin.assert:
+    that:
+      - item.id is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+      - item.fingerprint is match('^SHA256:[A-Za-z0-9+/]{20,60}$')
+      - item.public_key | length <= 16384
+      - item.public_key is not search('[\\r\\n\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]')
+      - item.public_key is not search('(?i)PRIVATE KEY|BEGIN OPENSSH|BEGIN RSA|BEGIN EC')
+      - >-
+        item.public_key is match(
+        '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [^\\r\\n]+)?$')
+      - not (sr_ra_fips_enabled and item.public_key is match('^ssh-ed25519 '))
+    fail_msg: >-
+      CA {{ item.id | default('<missing>') }} is not a supported single-line
+      OpenSSH public key, contains private material, or is FIPS-incompatible.
+  loop: "{{ sr_ra_ca_keys }}"
+  loop_control:
+    label: "{{ item.id | default('<invalid>') }}"
+
+- name: Compute each supplied CA fingerprint
+  ansible.builtin.command:
+    argv: [ssh-keygen, -E, sha256, -lf, -]
+    stdin: "{{ item.public_key }}\n"
+  register: sr_ra_computed_fingerprints
+  changed_when: false
+  check_mode: false
+  loop: "{{ sr_ra_ca_keys }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Reject public CA fingerprint mismatch
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.stdout | regex_findall('(?:^|\\s)(SHA256:[A-Za-z0-9+/]+)(?:\\s|$)') |
+         first | default('')) == item.item.fingerprint
+    fail_msg: >-
+      Public key {{ item.item.id }} does not match expected fingerprint
+      {{ item.item.fingerprint }}.
+  loop: "{{ sr_ra_computed_fingerprints.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+
+- name: Validate account and principal syntax
+  ansible.builtin.assert:
+    that:
+      - item.name is match('^[a-z_][a-z0-9_-]{0,31}$')
+      - item.name != 'root'
+      - item.principals is sequence
+      - item.principals is not string
+      - item.principals | length > 0
+      - item.principals | unique | length == item.principals | length
+      - >-
+        item.principals |
+        reject('match', '^srp_v1_[A-Za-z0-9_-]{20,96}$') |
+        list | length == 0
+    fail_msg: >-
+      Account names must identify non-root local accounts and every principal
+      must be one opaque token without options, whitespace, traversal, or controls.
+  loop: "{{ sr_ra_accounts }}"
+  loop_control:
+    label: "{{ item.name | default('<invalid>') }}"
+
+- name: Resolve requested local accounts
+  ansible.builtin.command:
+    argv: [getent, -s, files, passwd, "{{ item.name }}"]
+  register: sr_ra_account_records
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop: "{{ sr_ra_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Reject missing, UID 0, or login-disabled accounts
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - item.stdout.split(':') | length >= 7
+      - item.stdout.split(':')[2] | int > 0
+      - item.stdout.split(':')[6] not in ['/bin/false', '/sbin/nologin', '/usr/sbin/nologin', '']
+    fail_msg: >-
+      {{ item.item.name }} is missing, UID 0, malformed, or has a disabled login shell.
+  loop: "{{ sr_ra_account_records.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Evaluate effective sshd policy for each requested account
+  ansible.builtin.command:
+    argv:
+      - "{{ sr_ra_sshd_binary }}"
+      - -T
+      - -f
+      - /etc/ssh/sshd_config
+      - -C
+      - >-
+        user={{ item.name }},host={{ sr_ra_context_host }},addr={{ sr_ra_context_addr }}
+  register: sr_ra_account_effective_policy
+  changed_when: false
+  check_mode: false
+  loop: "{{ sr_ra_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Reject account-aware unmanaged CA policy
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.stdout | regex_findall('(?im)^trustedusercakeys\\s+(\\S+)$') |
+         first | default('none')) in ['none', sr_ra_trusted_ca_path]
+      - >-
+        (item.stdout | regex_findall('(?im)^authorizedprincipalsfile\\s+(.+)$') |
+         first | default('none')) in ['none', sr_ra_principals_dir ~ '/%u']
+    fail_msg: >-
+      Effective Match policy for {{ item.item.name }} points at an unmanaged
+      CA or principals source.
+  loop: "{{ sr_ra_account_effective_policy.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Render canonical desired public policy in memory
+  ansible.builtin.set_fact:
+    sr_ra_desired_ca_bundle: >-
+      {% for key in sr_ra_ca_keys | sort(attribute='id') %}
+      {{ key.public_key | trim }}
+      {% endfor %}
+    sr_ra_desired_sshd_dropin: |-
+      # Managed by ServiceRadar Ansible content. Do not edit.
+      TrustedUserCAKeys {{ sr_ra_trusted_ca_path }}
+      AuthorizedPrincipalsFile {{ sr_ra_principals_dir }}/%u
+    sr_ra_policy_digest: >-
+      {{ {'schema': 'serviceradar.remote_access.ssh_policy/v1',
+          'target': sr_ra_target_identity,
+          'ca_keys': sr_ra_ca_keys | sort(attribute='id'),
+          'accounts': sr_ra_accounts | sort(attribute='name')} |
+         to_json | hash('sha256') }}
+    sr_ra_principal_policy_digest: >-
+      {{ {'schema': 'serviceradar.remote_access.ssh_principals/v1',
+          'target': sr_ra_target_identity,
+          'accounts': sr_ra_accounts | sort(attribute='name')} |
+         to_json(sort_keys=true, separators=[',', ':']) | hash('sha256') }}
+  changed_when: false
+
+- name: Initialize desired principal-content map
+  ansible.builtin.set_fact:
+    sr_ra_desired_principals: {}
+  changed_when: false
+
+- name: Record desired per-account principal content
+  ansible.builtin.set_fact:
+    sr_ra_desired_principals: >-
+      {{ sr_ra_desired_principals | default({}) |
+         combine({item.name: (item.principals | sort | join('\n')) ~ '\n'}) }}
+  changed_when: false
+  loop: "{{ sr_ra_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Compute exact expected live role-owned files digest
+  ansible.builtin.set_fact:
+    sr_ra_expected_live_files_digest: >-
+      {{ {'ca_bundle': sr_ra_desired_ca_bundle,
+          'principals': sr_ra_desired_principals,
+          'sshd_dropin': sr_ra_desired_sshd_dropin} |
+         to_json(sort_keys=true, separators=[',', ':']) | hash('sha256') }}
+  changed_when: false

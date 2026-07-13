@@ -1,0 +1,16 @@
+---
+- name: Direct controller SSH CA guarded offboarding stage
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  serial: 1
+  tasks:
+    - name: Stage direct role-owned policy removal
+      ansible.builtin.include_role:
+        name: remote_access_ssh_ca
+      vars:
+        sr_ra_mode: direct
+        sr_ra_phase: stage
+        sr_ra_state: absent
+        sr_ra_operation: remove

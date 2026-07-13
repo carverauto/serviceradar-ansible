@@ -1,0 +1,7 @@
+---
+profile: production
+exclude_paths:
+  - .collections/
+  - molecule/*/.cache/
+mock_roles: []
+skip_list: []

@@ -1,0 +1,3 @@
+---
+- name: Load direct SSH CA retirement workflow
+  ansible.builtin.import_playbook: playbooks/direct-retire-stage.yml

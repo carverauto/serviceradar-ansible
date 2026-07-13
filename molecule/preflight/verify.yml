@@ -1,0 +1,27 @@
+---
+- name: Verify preflight made no role-owned host changes
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Check role-owned policy paths remain absent
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - /etc/ssh/serviceradar/current/trusted-user-ca-keys.pub
+        - /etc/ssh/serviceradar/current/authorized-principals
+        - /etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf
+      register: molecule_owned_paths
+
+    - name: Assert platform identity and read-only behavior
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == expected_distribution
+          - ansible_facts['distribution_major_version'] == expected_version.split('.')[0]
+          - molecule_owned_paths.results | selectattr('stat.exists') | list | length == 0
+
+    - name: Revalidate real sshd after preflight
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -t, -f, /etc/ssh/sshd_config]
+      changed_when: false
