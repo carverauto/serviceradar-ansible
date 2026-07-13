@@ -77,6 +77,13 @@ def check_wrappers() -> None:
     for value in ("SERVICERADAR_CALLBACK_IDEMPOTENCY_KEY", "Idempotency-Key"):
         if value not in callback:
             raise AssertionError(f"callback idempotency boundary missing: {value}")
+    for value in (
+        "status_code: [200, 409]",
+        "until: sr_callback_response.status | default(0) == 200",
+        "retries: 5",
+    ):
+        if value not in callback:
+            raise AssertionError(f"bounded callback retry contract missing: {value}")
     if "^(sr_ra_|sr_callback_|_sr_)" not in integrated:
         raise AssertionError("integrated host set lacks exhaustive reserved-prefix rejection")
 

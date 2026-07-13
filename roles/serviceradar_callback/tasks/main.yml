@@ -84,12 +84,15 @@
       manifest_sha256: >-
         {{ lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_MANIFEST_SHA256') }}
     return_content: true
-    status_code: 200
+    status_code: [200, 409]
     timeout: 10
     use_proxy: false
     validate_certs: true
     follow_redirects: none
   register: sr_callback_response
+  until: sr_callback_response.status | default(0) == 200
+  retries: 5
+  delay: 1
   no_log: true
   changed_when: false
   check_mode: false

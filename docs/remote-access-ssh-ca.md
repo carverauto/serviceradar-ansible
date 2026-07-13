@@ -126,11 +126,13 @@ bindings and an exact non-empty AWX limit. Only root wrappers listed under
 The ephemeral custom credential injects the environment values documented
 in `roles/serviceradar_callback/README.md`. The callback role:
 
-- calls the HTTPS server-selected action once with strict TLS, no proxy, no
-  redirects, a ten-second timeout, and `no_log`;
+- uses one controller-local HTTP task with strict TLS, no proxy, no redirects,
+  a ten-second per-attempt timeout, `no_log`, and at most five attempts;
 - sends a server-minted idempotency key bound to the exact request so an
   operator can safely retry only a byte-equivalent request after a lost
   response; key reuse with different request bytes must fail closed;
+- retries only the same key and request after a sanitized pending response or
+  ambiguous lost response, without adding a second logical read budget;
 - requires the server and reviewed EE egress boundary to cap the response at
   256 KiB, then performs a second post-receipt size check;
 - compares the response to the injected manifest, SCM revision, content digest,

@@ -23,3 +23,6 @@ The idempotency key is minted with the callback grant and bound to the exact
 request body. It permits only a byte-equivalent replay after an ambiguous lost
 response; it is not a second bearer and cannot authorize another action or
 request body. ServiceRadar must reject key reuse with different request bytes.
+The one controller-local HTTP task makes at most five bounded attempts with
+that same key and body so a sanitized pending response or a lost response can
+recover without adding a second logical read.
