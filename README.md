@@ -121,10 +121,11 @@ against the exact canonical device limit. See the
 ## Proxmox dynamic inventory
 
 `inventory/proxmox.proxmox.yml` discovers running guests with TLS verification
-enabled. The published AWX custom credential type injects a least-privilege API
-token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs in git or
-inventory variables. Use one AWX inventory per Proxmox cluster so reused PVE
-hostnames and VMIDs remain distinct through ServiceRadar's
+enabled. The published AWX custom credential types support either direct access
+or a restricted, non-intercepting HTTPS CONNECT relay. Both inject a least-
+privilege API token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs
+in git or inventory variables. Use one AWX inventory per Proxmox cluster so
+reused PVE hostnames and VMIDs remain distinct through ServiceRadar's
 controller/inventory/host identity. See the
 [Proxmox inventory guide](docs/proxmox-dynamic-inventory.md).
 

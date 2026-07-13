@@ -62,6 +62,8 @@ PROXMOX_INVENTORY_REQUIRED_FILES = {
     "collections/requirements.yml",
     "awx/credential-types/proxmox-api-token-ca/v1/inputs.json",
     "awx/credential-types/proxmox-api-token-ca/v1/injectors.json",
+    "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/inputs.json",
+    "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/injectors.json",
 }
 
 
@@ -466,6 +468,36 @@ def check_proxmox_inventory() -> None:
         raise AssertionError("Proxmox credential must force certificate validation")
     if "PROXMOX_TOKEN_SECRET" not in environment:
         raise AssertionError("Proxmox token secret injector is missing")
+
+    relay_inputs = json.loads(
+        (
+            ROOT
+            / "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/inputs.json"
+        ).read_text(encoding="utf-8")
+    )
+    relay_injectors = json.loads(
+        (
+            ROOT
+            / "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/injectors.json"
+        ).read_text(encoding="utf-8")
+    )
+    relay_fields = {field["id"]: field for field in relay_inputs.get("fields", [])}
+    expected_relay_fields = set(fields) | {"https_proxy"}
+    if set(relay_fields) != expected_relay_fields:
+        raise AssertionError("Proxmox relay credential type has an unexpected input surface")
+    if set(relay_inputs.get("required", [])) != expected_relay_fields:
+        raise AssertionError("Proxmox relay credential must require every reviewed field")
+    if relay_fields["token_secret"].get("secret") is not True:
+        raise AssertionError("Proxmox relay token secret must be an AWX secret input")
+    if relay_fields["https_proxy"].get("secret") is not False:
+        raise AssertionError("Proxmox CONNECT relay origin must be a non-secret input")
+    if relay_injectors.get("file") != {"template": "{{ ca_bundle }}"}:
+        raise AssertionError("Proxmox relay CA must use the AWX temporary credential file")
+    relay_environment = relay_injectors.get("env", {})
+    expected_relay_environment = dict(environment)
+    expected_relay_environment["HTTPS_PROXY"] = "{{ https_proxy }}"
+    if relay_environment != expected_relay_environment:
+        raise AssertionError("Proxmox relay credential injectors do not match the reviewed contract")
 
 
 def check_integrated_catalog_only() -> None:

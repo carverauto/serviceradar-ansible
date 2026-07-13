@@ -3,8 +3,7 @@
 The public `inventory/proxmox.proxmox.yml` source discovers running Proxmox
 guests without committing an API token or CA certificate. It always enables
 certificate validation. AWX supplies the API fields and a reviewed CA bundle
-through the versioned custom credential definition under
-`awx/credential-types/proxmox-api-token-ca/v1/`.
+through a versioned custom credential definition under `awx/credential-types/`.
 
 ## Controller setup
 
@@ -14,8 +13,10 @@ through the versioned custom credential definition under
    check rather than silently accepting an unsupported combination. The AWX
    project dependency is pinned in `collections/requirements.yml`; project
    collection syncing must be enabled so AWX installs that exact version.
-2. Create the custom credential type from the published `inputs.json` and
-   `injectors.json` without changing the fields or injectors.
+2. For a directly reachable cluster, create the custom credential type from
+   `proxmox-api-token-ca/v1/inputs.json` and `injectors.json` without changing
+   the fields or injectors. For a cluster reachable only through a controlled
+   network relay, use `proxmox-api-token-ca-connect-relay/v1/` instead.
 3. Create one credential instance for one Proxmox cluster. Set `url` to the
    reviewed bare HTTPS PVE origin, use a least-privilege API token, and paste
    only the independently obtained public CA chain into `ca_bundle`.
@@ -28,6 +29,21 @@ through the versioned custom credential definition under
 6. Import the inventory into ServiceRadar. ServiceRadar binds execution to the
    controller ID, AWX inventory ID, AWX host ID, and canonical device UID;
    display names and IP addresses are not execution identities.
+
+## Restricted CONNECT relay
+
+The relay credential type adds one required, non-secret `https_proxy` field.
+Set it to a reviewed HTTP proxy origin such as `http://relay.example:3128`.
+The Python HTTPS client sends a CONNECT request and then authenticates the PVE
+certificate through that tunnel with the independently supplied CA bundle. The
+relay must never terminate or re-sign TLS.
+
+Treat the relay as network policy, not as an authentication service. Restrict
+its listeners to the AWX execution-node addresses and restrict CONNECT targets
+to the exact PVE addresses and TCP port 8006. Do not configure proxy userinfo,
+response caching, TLS interception, a broad destination ACL, or an Internet-
+reachable listener. Keep each Proxmox credential bound to its original PVE
+HTTPS origin; do not replace the PVE URL with the relay address.
 
 Create a separate inventory and credential for every cluster. This is required
 when two clusters reuse names such as `pve01` or VMID `100`: AWX may reuse the
