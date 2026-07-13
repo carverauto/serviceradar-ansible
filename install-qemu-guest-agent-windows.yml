@@ -1,0 +1,9 @@
+---
+# Install and verify QEMU Guest Agent on Windows guests. In AWX, retain the
+# default target_hosts and use the job-template limit for exact device scope.
+- name: Install and verify QEMU Guest Agent on Windows
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: true
+
+  roles:
+    - role: windows_qemu_guest_agent

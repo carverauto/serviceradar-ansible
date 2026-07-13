@@ -1,0 +1,46 @@
+---
+argument_specs:
+  main:
+    short_description: Install and verify the Windows QEMU Guest Agent.
+    options:
+      windows_qemu_guest_agent_source:
+        type: str
+        choices: [https, mounted_iso]
+        default: mounted_iso
+      windows_qemu_guest_agent_msi_url:
+        type: str
+        default: ""
+      windows_qemu_guest_agent_msi_path:
+        type: str
+        default: ""
+      windows_qemu_guest_agent_msi_checksum:
+        type: str
+        default: ""
+      windows_qemu_guest_agent_download_path:
+        type: str
+        default: 'C:\Windows\Temp\serviceradar-qemu-ga-x86_64.msi'
+      windows_qemu_guest_agent_download_timeout:
+        type: int
+        default: 60
+      windows_qemu_guest_agent_use_proxy:
+        type: bool
+        default: true
+      windows_qemu_guest_agent_expected_version:
+        type: str
+        default: ""
+      windows_qemu_guest_agent_service_name:
+        type: str
+        default: QEMU-GA
+      windows_qemu_guest_agent_reboot_policy:
+        type: str
+        choices: [never, if_required, on_change]
+        default: never
+      windows_qemu_guest_agent_reboot_timeout:
+        type: int
+        default: 900
+      windows_qemu_guest_agent_post_reboot_delay:
+        type: int
+        default: 15
+      windows_qemu_guest_agent_require_virtio_serial:
+        type: bool
+        default: true

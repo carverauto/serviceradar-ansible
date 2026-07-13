@@ -1,0 +1,34 @@
+---
+# Choose one explicit acquisition boundary. HTTPS requires an immutable SHA-256;
+# mounted_iso requires an MSI path on a Windows CD-ROM drive.
+windows_qemu_guest_agent_source: mounted_iso
+windows_qemu_guest_agent_msi_url: ""
+windows_qemu_guest_agent_msi_path: ""
+windows_qemu_guest_agent_msi_checksum: ""
+
+# HTTPS downloads are staged only for the duration of the role and are removed
+# in an `always` block, including after an installation failure.
+windows_qemu_guest_agent_download_path: 'C:\Windows\Temp\serviceradar-qemu-ga-x86_64.msi'
+windows_qemu_guest_agent_download_timeout: 60
+windows_qemu_guest_agent_use_proxy: true
+
+# Set an exact file/product version when the operator wants a second assertion
+# in addition to the pinned artifact checksum. An empty value still requires the
+# installed binary to expose a non-empty version.
+windows_qemu_guest_agent_expected_version: ""
+
+# The QEMU MSI installs service QEMU-GA. Keep the upstream identity configurable
+# only for compatible downstream packaging; readiness always verifies the value.
+windows_qemu_guest_agent_service_name: QEMU-GA
+
+# The default refuses to reboot. `if_required` follows MSI return code 3010;
+# `on_change` reboots after any package install/upgrade. Neither policy reboots
+# an already-converged host.
+windows_qemu_guest_agent_reboot_policy: never
+windows_qemu_guest_agent_reboot_timeout: 900
+windows_qemu_guest_agent_post_reboot_delay: 15
+
+# QGA needs a healthy VirtIO serial controller/channel. Disable only when an
+# operator intentionally stages the package before enabling the PVE/QEMU device;
+# such a run cannot establish end-to-end readiness.
+windows_qemu_guest_agent_require_virtio_serial: true

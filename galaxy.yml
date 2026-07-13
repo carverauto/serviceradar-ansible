@@ -5,16 +5,21 @@ version: 0.1.0
 readme: README.md
 authors:
   - ServiceRadar Authors
-description: Safely enroll Linux SSH targets into ServiceRadar user-CA trust.
+description: Secure remote-access and guest automation for ServiceRadar operators.
 license:
   - Apache-2.0
 tags:
   - infrastructure
   - security
   - ssh
+  - windows
+  - qemu
+  - proxmox
   - serviceradar
 repository: https://code.carverauto.dev/carverauto/serviceradar-ansible
 issues: https://code.carverauto.dev/carverauto/serviceradar-ansible/issues
+dependencies:
+  ansible.windows: ">=3.4.0,<4.0.0"
 build_ignore:
   - .ansible
   - .ansible-lint
@@ -30,4 +35,5 @@ build_ignore:
   - tests
   - requirements-ci.txt
   - requirements-ci.lock
+  - requirements.yml
   - ansible.cfg

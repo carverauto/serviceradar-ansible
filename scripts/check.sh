@@ -32,9 +32,16 @@ if command -v ansible-playbook >/dev/null 2>&1; then
     ansible-playbook --syntax-check -i 'localhost,' "${wrapper}"
   done < <(
     find . -maxdepth 1 -type f \
-      \( -name 'remote-access-*.yml' -o -name 'install-agent-*.yml' -o -name 'ping.yml' \) \
+      \( -name 'remote-access-*.yml' -o -name 'install-*.yml' \
+         -o -name 'qemu-guest-agent-*.yml' -o -name 'ping.yml' \) \
       -print | sort
   )
 else
   echo "SKIP: ansible-playbook is not installed" >&2
+fi
+
+if command -v molecule >/dev/null 2>&1; then
+  molecule syntax -s windows_qga_static
+else
+  echo "SKIP: molecule is not installed" >&2
 fi

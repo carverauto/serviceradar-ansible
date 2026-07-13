@@ -1,0 +1,60 @@
+---
+# Read-only AWX preflight for discovering the x64 QEMU Guest Agent MSI on
+# attached CD-ROM media. Output is intentionally limited to path, SHA-256, and
+# Authenticode status; no credential or host identity is returned.
+- name: Discover and verify mounted QEMU Guest Agent MSI on Windows
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Discover QEMU Guest Agent MSI files on CD-ROM drives
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param ()
+
+          $artifacts = @(
+              Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=5' |
+                  ForEach-Object {
+                      $path = "$($_.DeviceID)\guest-agent\qemu-ga-x86_64.msi"
+                      if (Test-Path -LiteralPath $path -PathType Leaf) {
+                          $signature = Get-AuthenticodeSignature -LiteralPath $path
+                          [PSCustomObject]@{
+                              path = $path
+                              sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                              authenticode_status = $signature.Status.ToString()
+                          }
+                      }
+                  }
+          )
+          $Ansible.Changed = $false
+          [PSCustomObject]@{ artifacts = $artifacts }
+      register: windows_qemu_guest_agent_preflight
+
+    - name: Report only the mounted artifact trust record
+      ansible.builtin.debug:
+        msg: "{{ windows_qemu_guest_agent_preflight.output[0].artifacts | default([]) }}"
+
+    - name: Require one valid signed MSI and the optional expected SHA-256
+      ansible.builtin.assert:
+        that:
+          - windows_qemu_guest_agent_preflight.output | length == 1
+          - windows_qemu_guest_agent_preflight.output[0].artifacts | length == 1
+          - >-
+            windows_qemu_guest_agent_preflight.output[0].artifacts[0].authenticode_status ==
+            'Valid'
+          - >-
+            windows_qemu_guest_agent_preflight_expected_checksum | default('') |
+            length == 0 or
+            windows_qemu_guest_agent_preflight_expected_checksum is
+            match('^[A-Fa-f0-9]{64}$')
+          - >-
+            windows_qemu_guest_agent_preflight_expected_checksum | default('') |
+            length == 0 or
+            windows_qemu_guest_agent_preflight.output[0].artifacts[0].sha256 ==
+            windows_qemu_guest_agent_preflight_expected_checksum |
+            default('') | lower
+        fail_msg: >-
+          Preflight requires exactly one guest-agent\qemu-ga-x86_64.msi on
+          CD-ROM, a Valid Authenticode signature, and (when provided) the exact
+          expected SHA-256.
