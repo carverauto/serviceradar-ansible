@@ -19,3 +19,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - An explicit mounted-ISO-only policy for upstream unsigned QGA MSI builds,
   gated by the exact pinned SHA-256; signed installers remain the default.
 - QEMU-GA service, binary/version, VirtIO serial, and reboot-policy verification.
+
+### Changed
+
+- Pin the Windows role to the AWX 24.6.1-supported `ansible.windows 2.4.0`
+  runtime and enforce Authenticode policy explicitly before package execution.

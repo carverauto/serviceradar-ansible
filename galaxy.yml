@@ -19,7 +19,7 @@ tags:
 repository: https://code.carverauto.dev/carverauto/serviceradar-ansible
 issues: https://code.carverauto.dev/carverauto/serviceradar-ansible/issues
 dependencies:
-  ansible.windows: ">=3.4.0,<4.0.0"
+  ansible.windows: ">=2.4.0,<3.0.0"
 build_ignore:
   - .ansible
   - .ansible-lint

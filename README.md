@@ -86,7 +86,8 @@ on the exact VM and establish WinRM or Windows OpenSSH first. See the
 [inventory example](examples/windows-qemu-guest-agent-inventory.yml).
 The repository also includes a reproducible
 [`execution-environment.yml`](execution-environment.yml) that layers the pinned
-`ansible.windows 3.6.1` collection onto AWX EE 24.6.1.
+`ansible.windows 2.4.0` collection onto AWX EE 24.6.1. This keeps the collection
+inside that AWX release's supported Ansible Core 2.15 runtime.
 
 ## Agent installation content
 

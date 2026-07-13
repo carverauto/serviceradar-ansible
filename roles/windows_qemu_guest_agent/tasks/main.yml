@@ -161,14 +161,48 @@
       register: windows_qemu_guest_agent_download
       when: windows_qemu_guest_agent_source == 'https'
 
+    - name: Inspect the pinned MSI Authenticode status
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param (
+              [Parameter(Mandatory = $true)]
+              [string]$Path
+          )
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $Path
+          $Ansible.Changed = $false
+          [PSCustomObject]@{
+              status = $signature.Status.ToString()
+          }
+        parameters:
+          Path: "{{ windows_qemu_guest_agent_effective_msi_path }}"
+      register: windows_qemu_guest_agent_signature
+
+    - name: Require the selected Authenticode policy before installation
+      ansible.builtin.assert:
+        that:
+          - windows_qemu_guest_agent_signature.output | length == 1
+          - >-
+            windows_qemu_guest_agent_signature_policy != 'require_valid' or
+            windows_qemu_guest_agent_signature.output[0].status == 'Valid'
+          - >-
+            windows_qemu_guest_agent_signature_policy !=
+            'allow_unsigned_pinned_iso' or
+            windows_qemu_guest_agent_signature.output[0].status in
+            ['Valid', 'NotSigned']
+        fail_msg: >-
+          The pinned MSI failed its Authenticode policy. HTTPS sources require
+          Valid; the explicit mounted-ISO exception accepts only Valid or
+          NotSigned. HashMismatch, NotTrusted, UnknownError, and every other
+          status are refused before package execution.
+
     - name: Install or upgrade the QEMU Guest Agent MSI
       ansible.windows.win_package:
         path: "{{ windows_qemu_guest_agent_effective_msi_path }}"
         state: present
         checksum: "{{ windows_qemu_guest_agent_msi_checksum }}"
         checksum_algorithm: sha256
-        verify_signature: >-
-          {{ windows_qemu_guest_agent_signature_policy == 'require_valid' }}
       register: windows_qemu_guest_agent_package
   always:
     - name: Remove the transient HTTPS MSI

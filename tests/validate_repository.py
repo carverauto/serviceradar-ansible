@@ -240,8 +240,10 @@ def check_windows_qga() -> None:
         "validate_certs: true",
         "checksum_algorithm: sha256",
         "ansible.windows.win_package:",
-        "verify_signature: >-",
-        "windows_qemu_guest_agent_signature_policy == 'require_valid'",
+        "Get-AuthenticodeSignature",
+        "windows_qemu_guest_agent_signature.output[0].status == 'Valid'",
+        "['Valid', 'NotSigned']",
+        "windows_qemu_guest_agent_signature_policy != 'require_valid'",
         "allow_unsigned_pinned_iso",
         "Win32_LogicalDisk",
         "drive_type | int == 5",
@@ -262,7 +264,7 @@ def check_windows_qga() -> None:
 
     forbidden_task_patterns = {
         "validate_certs: false",
-        "verify_signature: false",
+        "verify_signature:",
         "ansible.windows.win_shell:",
         "ansible.windows.win_command:",
         "ansible.builtin.raw:",
@@ -280,15 +282,15 @@ def check_windows_qga() -> None:
     execution_environment = (ROOT / "execution-environment.yml").read_text(
         encoding="utf-8"
     )
-    if 'ansible.windows: \">=3.4.0,<4.0.0\"' not in galaxy:
+    if 'ansible.windows: \">=2.4.0,<3.0.0\"' not in galaxy:
         raise AssertionError("collection must declare the supported ansible.windows range")
-    for value in ("name: ansible.windows", "version: 3.6.1"):
+    for value in ("name: ansible.windows", "version: 2.4.0"):
         if value not in requirements:
             raise AssertionError(f"exact Windows collection lock missing: {value}")
     for value in (
         "quay.io/ansible/awx-ee@sha256:d6fca88c8c26e143b1fc71cc60db3b0ee06c43cc46fd395e902dcec3dbc5af9b",
         "galaxy: requirements.yml",
-        "ansible\\.windows[[:space:]]+3\\.6\\.1",
+        "ansible\\.windows[[:space:]]+2\\.4\\.0",
     ):
         if value not in execution_environment:
             raise AssertionError(f"Windows AWX execution environment missing: {value}")

@@ -13,4 +13,4 @@ additional_build_steps:
   append_final:
     - >-
       RUN ansible-galaxy collection list ansible.windows |
-      grep -Eq '^ansible\.windows[[:space:]]+3\.6\.1$'
+      grep -Eq '^ansible\.windows[[:space:]]+2\.4\.0$'

@@ -37,27 +37,29 @@ end of the channel; step 6 is the end-to-end proof.
 
 ## Controller dependency
 
-The collection declares `ansible.windows >=3.4.0,<4.0.0`; CI pins version
-`3.6.1` in `requirements.yml`. Install the reviewed dependency before running
+The collection declares `ansible.windows >=2.4.0,<3.0.0`; CI pins version
+`2.4.0` in `requirements.yml`. Install the reviewed dependency before running
 source-tree playbooks:
 
 ```sh
 ansible-galaxy collection install -r requirements.yml -p .collections
 ```
 
-`ansible.windows` is not included in `ansible-core`. Version 3.4.0 or newer is
-required because this role uses `win_package.verify_signature`; it is enabled
-by default and disabled only for the explicit pinned unsigned-ISO policy.
+`ansible.windows` is not included in `ansible-core`. The role reads
+Authenticode status with PowerShell and refuses non-compliant artifacts before
+calling `win_package`; `win_package` independently rechecks the pinned SHA-256.
+This avoids pairing AWX 24.6.1's Ansible Core 2.15 runtime with an unsupported
+3.x collection while preserving the same fail-closed trust boundary.
 
 For AWX, build `execution-environment.yml` and register the resulting immutable
 image digest. It starts from the pinned linux/amd64 AWX EE 24.6.1 digest,
 installs the exact collection lock, and fails its image build unless
-`ansible.windows 3.6.1` is present:
+`ansible.windows 2.4.0` is present:
 
 ```sh
 ansible-builder build \
   --file execution-environment.yml \
-  --tag registry.example.net/automation/serviceradar-awx-ee:24.6.1-windows-3.6.1
+  --tag registry.example.net/automation/serviceradar-awx-ee:24.6.1-windows-2.4.0
 ```
 
 Do not assume AWX's bundled default EE has a recent enough `ansible.windows`.
