@@ -29,11 +29,12 @@ class CallbackCredentialContractTest(unittest.TestCase):
         canonical = contract.canonical_contract(91)
         expected = (
             ARTIFACT_ROOT / "conformance-id-91.canonical.json"
-        ).read_bytes().removesuffix(b"\n")
+        ).read_bytes()
         expected_digest = (
             ARTIFACT_ROOT / "conformance-id-91.sha256"
         ).read_text(encoding="ascii").strip()
 
+        self.assertFalse(expected.endswith(b"\n"))
         self.assertEqual(canonical, expected)
         self.assertEqual(
             contract.contract_sha256(canonical),
@@ -104,10 +105,35 @@ class CallbackCredentialContractTest(unittest.TestCase):
             with self.assertRaisesRegex(contract.ContractError, "callback_url"):
                 contract.canonical_contract(91, inputs_path=path)
 
+    def test_rejects_changed_labels_and_optional_field_properties(self) -> None:
+        for mutation, expected_error in (
+            ("label", "unreviewed label"),
+            ("help_text", "may contain only"),
+        ):
+            with self.subTest(mutation=mutation):
+                inputs = json.loads(
+                    contract.DEFAULT_INPUTS.read_text(encoding="utf-8")
+                )
+                field = next(
+                    item for item in inputs["fields"] if item["id"] == "callback_url"
+                )
+                if mutation == "label":
+                    field["label"] = "Callback endpoint"
+                else:
+                    field["help_text"] = "Unreviewed UI metadata"
+
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "inputs.json"
+                    path.write_text(json.dumps(inputs), encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        contract.ContractError, expected_error
+                    ):
+                        contract.canonical_contract(91, inputs_path=path)
+
     def test_canonical_and_digest_output_modes_are_pipeable(self) -> None:
         canonical = contract.canonical_contract(17)
         for output, expected in (
-            ("canonical", canonical + b"\n"),
+            ("canonical", canonical),
             (
                 "sha256",
                 contract.contract_sha256(canonical).encode("ascii") + b"\n",

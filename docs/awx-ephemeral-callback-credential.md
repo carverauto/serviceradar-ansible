@@ -46,9 +46,26 @@ variable. Authentication to AWX is an operator deployment concern and is not
 part of these public artifacts.
 
 The type must remain custom (`managed: false`) and `kind: cloud`. Do not add
-fields, required entries, environment mappings, `extra_vars`, or file
-injectors. ServiceRadar's selected edge agent fetches the AWX type before use,
-normalizes it to the contract below, and rejects any digest drift.
+fields, required entries, environment mappings, `extra_vars`, file injectors,
+or optional field properties. The versioned public artifact is intentionally
+strict: its repository validator requires the exact labels and permits only
+`id`, `label`, `type`, and `secret` on each field.
+
+ServiceRadar's selected edge agent fetches the saved AWX type before use. Its
+runtime schema gate separately enforces the positive type ID, unmanaged
+`cloud` kind, exact `fields` and `required` input properties, exact field
+labels and `id`/`type`/`secret` properties, and the environment-only injector.
+It rejects added properties such as `help_text`, `choices`, `format`, or
+`multiline` before calculating the digest.
+
+The language-neutral canonical digest intentionally normalizes only each
+field's security-relevant `id`, `type`, and `secret` values, plus the exact
+required IDs and environment mappings. Labels are not digest inputs, but they
+are still checked for exact equality by the preceding runtime schema gate.
+This two-step validation keeps the digest stable across implementations
+without allowing AWX UI-schema drift. Always install and review the exact
+published artifacts rather than treating the digest alone as artifact-source
+validation.
 
 ## Exact security boundary
 
@@ -82,13 +99,18 @@ to copy from another installation:
 python3 scripts/awx_callback_credential_contract.py 91
 ```
 
-The default output is two lines: exact canonical contract JSON followed by its
-lowercase SHA-256. Pipe either value separately when needed:
+The default output is two newline-delimited records: canonical contract JSON
+followed by its lowercase SHA-256. Pipe either value separately when needed:
 
 ```sh
 python3 scripts/awx_callback_credential_contract.py 91 --output canonical > callback-contract.json
 python3 scripts/awx_callback_credential_contract.py 91 --output sha256
 ```
+
+`--output canonical` writes the exact bytes covered by the digest, with no
+trailing newline. The redirected `callback-contract.json` can therefore be
+hashed directly and must produce the same value as `--output sha256`. Digest-
+only output is a conventional newline-terminated text record.
 
 For the ID-91 vector, the digest is:
 
@@ -96,9 +118,9 @@ For the ID-91 vector, the digest is:
 cd42bea50b45fcb010c1cc1e89243b8d9d0230bc2fe0b6bb9d49839d17f5a263
 ```
 
-The canonical bytes are UTF-8 minified JSON with recursively sorted object
-keys. Field objects and required IDs are sorted by input ID. The top-level
-contract is:
+The canonical bytes are UTF-8 minified JSON with no byte-order mark or trailing
+newline and with recursively sorted object keys. Field objects and required
+IDs are sorted by input ID. The top-level contract is:
 
 - schema `serviceradar.awx_callback_credential_type`
 - version `1`

@@ -24,5 +24,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- Make canonical-only AWX callback contract output and its checked-in vector
+  byte-identical to the bytes covered by the published SHA-256.
 - Pin the Windows role to the AWX 24.6.1-supported `ansible.windows 2.4.0`
   runtime and enforce Authenticode policy explicitly before package execution.

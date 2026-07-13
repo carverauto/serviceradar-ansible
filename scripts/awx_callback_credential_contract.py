@@ -223,8 +223,9 @@ def parser() -> argparse.ArgumentParser:
         choices=("both", "canonical", "sha256"),
         default="both",
         help=(
-            "stdout format: canonical JSON plus digest on separate lines, "
-            "canonical JSON only, or digest only (default: both)"
+            "stdout format: newline-delimited canonical JSON plus digest "
+            "(both), exact canonical bytes without a trailing newline "
+            "(canonical), or a newline-terminated digest (sha256)"
         ),
     )
     return result
@@ -243,8 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         argument_parser.exit(2, f"error: {error}\n")
 
     digest = contract_sha256(canonical)
-    if args.output in {"both", "canonical"}:
+    if args.output == "both":
         sys.stdout.buffer.write(canonical + b"\n")
+    elif args.output == "canonical":
+        sys.stdout.buffer.write(canonical)
     if args.output in {"both", "sha256"}:
         sys.stdout.buffer.write(digest.encode("ascii") + b"\n")
     return 0
