@@ -1,0 +1,42 @@
+{
+  "fields": [
+    {
+      "id": "url",
+      "label": "Proxmox HTTPS origin",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "user",
+      "label": "Proxmox user",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "token_id",
+      "label": "Proxmox token ID",
+      "type": "string",
+      "secret": false
+    },
+    {
+      "id": "token_secret",
+      "label": "Proxmox token secret",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "ca_bundle",
+      "label": "Reviewed Proxmox CA bundle",
+      "type": "string",
+      "secret": false,
+      "multiline": true
+    }
+  ],
+  "required": [
+    "url",
+    "user",
+    "token_id",
+    "token_secret",
+    "ca_bundle"
+  ]
+}

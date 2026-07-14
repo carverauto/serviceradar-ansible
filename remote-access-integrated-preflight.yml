@@ -1,0 +1,16 @@
+---
+- name: Bind this wrapper to integrated enrollment preflight
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Require callback credential intent for this exact wrapper
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') == 'preflight'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') == 'present'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') == 'enroll'
+      run_once: true
+      delegate_to: localhost
+
+- name: Load integrated SSH CA read-only preflight
+  ansible.builtin.import_playbook: playbooks/integrated.yml

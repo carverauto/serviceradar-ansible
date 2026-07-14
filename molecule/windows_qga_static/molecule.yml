@@ -1,0 +1,29 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+driver:
+  name: default
+platforms:
+  - name: windows-qga-https
+  - name: windows-qga-mounted-iso
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  inventory:
+    hosts:
+      all:
+        children:
+          windows_qga_https:
+            hosts:
+              windows-qga-https:
+          windows_qga_mounted_iso:
+            hosts:
+              windows-qga-mounted-iso:
+scenario:
+  test_sequence:
+    - syntax

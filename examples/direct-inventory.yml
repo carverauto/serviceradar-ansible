@@ -1,0 +1,20 @@
+---
+all:
+  hosts:
+    example-linux-host:
+      ansible_host: 192.0.2.10
+      sr_ra_target_identity:
+        operator_target_id: example-linux-host
+      sr_ra_ca_keys:
+        - id: primary-2026
+          public_key: "<OPENSSH_PUBLIC_USER_CA_KEY>"
+          fingerprint: "SHA256:<EXPECTED_PUBLIC_KEY_FINGERPRINT>"
+      sr_ra_accounts:
+        - name: existing_operator
+          principals:
+            - srp_v1_replace_with_target_specific_opaque_principal
+      sr_ra_transaction:
+        id: replace-with-unique-transaction-id
+        stage_job_id: replace-with-controller-job-id
+        generation: replace-with-unique-generation-id
+        machine_credential_ref: controller-credential-ref:replace-with-opaque-id

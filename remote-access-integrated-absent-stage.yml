@@ -1,0 +1,16 @@
+---
+- name: Bind this wrapper to integrated removal stage
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Require callback credential intent for this exact wrapper
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') == 'stage'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') == 'absent'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') == 'remove'
+      run_once: true
+      delegate_to: localhost
+
+- name: Load integrated SSH CA permission-gated offboarding stage
+  ansible.builtin.import_playbook: playbooks/integrated.yml

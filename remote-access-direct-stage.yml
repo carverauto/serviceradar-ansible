@@ -1,0 +1,3 @@
+---
+- name: Load direct SSH CA stage workflow
+  ansible.builtin.import_playbook: playbooks/direct-stage.yml

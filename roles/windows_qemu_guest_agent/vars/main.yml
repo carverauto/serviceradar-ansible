@@ -1,0 +1,6 @@
+---
+# Keep the regular expression in a YAML variable so Jinja does not reinterpret
+# its backslashes while parsing an inline string literal. Two backslashes in a
+# YAML single-quoted scalar become the regex escape for one literal Windows
+# path separator.
+_windows_qemu_guest_agent_absolute_msi_pattern: '^[A-Za-z]:\\.*[.]msi$'

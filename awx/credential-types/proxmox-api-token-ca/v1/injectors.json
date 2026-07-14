@@ -1,0 +1,13 @@
+{
+  "env": {
+    "PROXMOX_URL": "{{ url }}",
+    "PROXMOX_USER": "{{ user }}",
+    "PROXMOX_TOKEN_ID": "{{ token_id }}",
+    "PROXMOX_TOKEN_SECRET": "{{ token_secret }}",
+    "PROXMOX_VALIDATE_CERTS": "true",
+    "REQUESTS_CA_BUNDLE": "{{ tower.filename }}"
+  },
+  "file": {
+    "template": "{{ ca_bundle }}"
+  }
+}

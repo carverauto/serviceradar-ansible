@@ -1,0 +1,93 @@
+---
+- name: Snapshot the exact AWX-limited host set without contacting targets
+  hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Reject every reserved variable on every limited inventory host
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[item].keys() |
+            select('match', '^(sr_ra_|sr_callback_|_sr_)') | list | length == 0
+        fail_msg: >-
+          Integrated wrappers reject all direct, callback, wrapper, and internal
+          reserved variables from inventory, surveys, and ordinary extra vars.
+      loop: "{{ ansible_play_hosts_all }}"
+      no_log: true
+      run_once: true
+      delegate_to: localhost
+
+    - name: Create controller-only group for the exact limited host set
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: serviceradar_callback_targets
+      loop: "{{ ansible_play_hosts_all }}"
+      changed_when: false
+      run_once: true
+      delegate_to: localhost
+
+    - name: Materialize every exact AWX host binding before callback
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in ansible_play_hosts_all
+          - inventory_hostname in groups['serviceradar_callback_targets']
+        fail_msg: The controller-only callback host set changed before materialization.
+      no_log: true
+      changed_when: false
+      delegate_to: localhost
+
+- name: Resolve and validate the callback exactly once on the AWX controller
+  hosts: serviceradar_callback_targets
+  connection: local
+  become: false
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Consume the target-bound one-use callback grant
+      ansible.builtin.include_role:
+        name: serviceradar_callback
+      run_once: true
+
+- name: Execute callback-derived lifecycle phase on exact managed targets
+  hosts: serviceradar_callback_targets
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require callback-derived values for this exact play host
+      ansible.builtin.assert:
+        that:
+          - _sr_ra_callback_ca_keys is defined
+          - _sr_ra_callback_accounts is defined
+          - _sr_ra_callback_target_identity is defined
+          - _sr_ra_callback_transaction is defined
+          - _sr_ra_callback_authorization is defined
+          - _sr_ra_callback_phase is defined
+          - _sr_ra_callback_state is defined
+          - _sr_ra_callback_operation is defined
+        fail_msg: No exact callback policy was attached to this play host.
+      no_log: true
+
+    - name: Discard any connection persisted before a verification job
+      ansible.builtin.meta: reset_connection
+      when: _sr_ra_callback_phase == 'verify'
+
+    - name: Gather supported target facts only after callback set equality
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Run non-downgradable integrated lifecycle phase
+      ansible.builtin.include_role:
+        name: remote_access_ssh_ca
+      vars:
+        sr_ra_mode: integrated
+        sr_ra_phase: "{{ _sr_ra_callback_phase }}"
+        sr_ra_state: "{{ _sr_ra_callback_state }}"
+        sr_ra_operation: "{{ _sr_ra_callback_operation }}"
+        sr_ra_ca_keys: "{{ _sr_ra_callback_ca_keys }}"
+        sr_ra_accounts: "{{ _sr_ra_callback_accounts }}"
+        sr_ra_target_identity: "{{ _sr_ra_callback_target_identity }}"
+        sr_ra_transaction: "{{ _sr_ra_callback_transaction }}"
+        sr_ra_authorization: "{{ _sr_ra_callback_authorization }}"
+        sr_ra_retirement_proof: "{{ _sr_ra_callback_retirement_proof }}"

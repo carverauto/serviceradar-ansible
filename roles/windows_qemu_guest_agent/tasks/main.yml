@@ -1,0 +1,329 @@
+---
+- name: Refuse unsupported execution and artifact inputs
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - (ansible_facts['os_family'] | default('')) == 'Windows'
+      - >-
+        (ansible_facts['architecture2'] |
+         default(ansible_facts['architecture'] | default('')) | lower) in
+        ['amd64', 'x86_64', '64-bit', '64 bit']
+      - windows_qemu_guest_agent_service_name == 'QEMU-GA'
+      - >-
+        windows_qemu_guest_agent_signature_policy !=
+        'allow_unsigned_pinned_iso' or
+        windows_qemu_guest_agent_source == 'mounted_iso'
+      - windows_qemu_guest_agent_download_timeout >= 1
+      - windows_qemu_guest_agent_reboot_timeout >= 60
+      - windows_qemu_guest_agent_post_reboot_delay >= 0
+      - >-
+        windows_qemu_guest_agent_download_path is
+        match(_windows_qemu_guest_agent_absolute_msi_pattern)
+      - >-
+        windows_qemu_guest_agent_source != 'https' or
+        windows_qemu_guest_agent_msi_url is
+        match('^https://[^/@?#]+(?:/[^?#\\s]*)?\.msi$')
+      - >-
+        windows_qemu_guest_agent_source != 'https' or
+        windows_qemu_guest_agent_msi_checksum is
+        match('^[A-Fa-f0-9]{64}$')
+      - >-
+        windows_qemu_guest_agent_source != 'mounted_iso' or
+        windows_qemu_guest_agent_msi_path is
+        match(_windows_qemu_guest_agent_absolute_msi_pattern)
+      - >-
+        windows_qemu_guest_agent_source != 'mounted_iso' or
+        windows_qemu_guest_agent_msi_url | length == 0
+      - >-
+        windows_qemu_guest_agent_source != 'mounted_iso' or
+        windows_qemu_guest_agent_msi_checksum is
+        match('^[A-Fa-f0-9]{64}$')
+    fail_msg: >-
+      Windows QGA installation refused. Use a 64-bit Windows target and choose
+      either an HTTPS .msi URL without userinfo/query/fragment plus an exact
+      64-hex SHA-256, or an absolute .msi path on a mounted CD-ROM plus its
+      exact SHA-256. Check mode is intentionally unsupported because readiness
+      requires live service and binary verification. Unsigned artifacts are
+      accepted only through the explicit allow_unsigned_pinned_iso policy on
+      mounted CD-ROM media with the pinned digest.
+
+- name: Inspect the VirtIO serial controller in Windows
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param ()
+
+      $devices = @(
+          Get-CimInstance -ClassName Win32_PnPEntity | Where-Object {
+              $_.PNPDeviceID -match '^PCI\\VEN_1AF4&DEV_(1003|1043)' -or
+              $_.Name -match 'VirtIO Serial'
+          }
+      )
+      $healthy = @($devices | Where-Object { $_.ConfigManagerErrorCode -eq 0 })
+      $Ansible.Changed = $false
+      [PSCustomObject]@{
+          detected_count = $devices.Count
+          healthy_count = $healthy.Count
+          devices = @($devices | ForEach-Object {
+              [PSCustomObject]@{
+                  name = $_.Name
+                  pnp_device_id = $_.PNPDeviceID
+                  error_code = $_.ConfigManagerErrorCode
+              }
+          })
+      }
+  register: windows_qemu_guest_agent_virtio_serial
+
+- name: Require a healthy VirtIO serial prerequisite
+  ansible.builtin.assert:
+    that:
+      - windows_qemu_guest_agent_virtio_serial.output | length == 1
+      - >-
+        windows_qemu_guest_agent_virtio_serial.output[0].healthy_count |
+        int >= 1
+    fail_msg: >-
+      No healthy VirtIO serial controller was detected. Enable the QEMU guest
+      agent channel on the Proxmox/QEMU VM, install the vioserial driver from
+      the pinned VirtIO media, reboot the guest if Windows requires it, and
+      rerun this role. Set require_virtio_serial=false only to stage the MSI;
+      that override cannot establish QGA readiness.
+  when: windows_qemu_guest_agent_require_virtio_serial
+
+- name: Inspect the explicitly mounted MSI source
+  when: windows_qemu_guest_agent_source == 'mounted_iso'
+  block:
+    - name: Verify the mounted MSI is a regular file and calculate SHA-256
+      ansible.windows.win_stat:
+        path: "{{ windows_qemu_guest_agent_msi_path }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: windows_qemu_guest_agent_mounted_stat
+
+    - name: Verify the mounted MSI resides on CD-ROM media
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param (
+              [Parameter(Mandatory = $true)]
+              [string]$Path
+          )
+
+          $root = [System.IO.Path]::GetPathRoot($Path)
+          if (-not $root) {
+              throw "The MSI path has no drive root."
+          }
+          $deviceId = $root.TrimEnd('\\')
+          $escaped = $deviceId.Replace("'", "''")
+          $drive = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$escaped'"
+          $Ansible.Changed = $false
+          [PSCustomObject]@{
+              device_id = $deviceId
+              drive_type = if ($drive) { $drive.DriveType } else { -1 }
+              volume_name = if ($drive) { $drive.VolumeName } else { $null }
+          }
+        parameters:
+          Path: "{{ windows_qemu_guest_agent_msi_path }}"
+      register: windows_qemu_guest_agent_mounted_drive
+
+    - name: Require an existing CD-ROM MSI with the pinned digest
+      ansible.builtin.assert:
+        that:
+          - windows_qemu_guest_agent_mounted_stat.stat.isreg | default(false)
+          - windows_qemu_guest_agent_mounted_drive.output | length == 1
+          - windows_qemu_guest_agent_mounted_drive.output[0].drive_type | int == 5
+          - >-
+            windows_qemu_guest_agent_mounted_stat.stat.checksum | lower ==
+            windows_qemu_guest_agent_msi_checksum | lower
+        fail_msg: >-
+          The mounted_iso source must be a regular MSI on a Windows CD-ROM
+          drive (Win32_LogicalDisk DriveType 5), and its SHA-256 must match the
+          pinned checksum exactly.
+
+- name: Select the effective MSI path
+  ansible.builtin.set_fact:
+    windows_qemu_guest_agent_effective_msi_path: >-
+      {{ windows_qemu_guest_agent_download_path
+         if windows_qemu_guest_agent_source == 'https'
+         else windows_qemu_guest_agent_msi_path }}
+
+- name: Acquire and install the trusted QEMU Guest Agent MSI
+  block:
+    - name: Download the exact HTTPS MSI with mandatory SHA-256 verification
+      ansible.windows.win_get_url:
+        url: "{{ windows_qemu_guest_agent_msi_url }}"
+        dest: "{{ windows_qemu_guest_agent_download_path }}"
+        checksum: "{{ windows_qemu_guest_agent_msi_checksum }}"
+        checksum_algorithm: sha256
+        validate_certs: true
+        use_proxy: "{{ windows_qemu_guest_agent_use_proxy }}"
+        url_timeout: "{{ windows_qemu_guest_agent_download_timeout }}"
+        force: false
+      register: windows_qemu_guest_agent_download
+      when: windows_qemu_guest_agent_source == 'https'
+
+    - name: Inspect the pinned MSI Authenticode status
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param (
+              [Parameter(Mandatory = $true)]
+              [string]$Path
+          )
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $Path
+          $Ansible.Changed = $false
+          [PSCustomObject]@{
+              status = $signature.Status.ToString()
+          }
+        parameters:
+          Path: "{{ windows_qemu_guest_agent_effective_msi_path }}"
+      register: windows_qemu_guest_agent_signature
+
+    - name: Require the selected Authenticode policy before installation
+      ansible.builtin.assert:
+        that:
+          - windows_qemu_guest_agent_signature.output | length == 1
+          - >-
+            windows_qemu_guest_agent_signature_policy != 'require_valid' or
+            windows_qemu_guest_agent_signature.output[0].status == 'Valid'
+          - >-
+            windows_qemu_guest_agent_signature_policy !=
+            'allow_unsigned_pinned_iso' or
+            windows_qemu_guest_agent_signature.output[0].status in
+            ['Valid', 'NotSigned']
+        fail_msg: >-
+          The pinned MSI failed its Authenticode policy. HTTPS sources require
+          Valid; the explicit mounted-ISO exception accepts only Valid or
+          NotSigned. HashMismatch, NotTrusted, UnknownError, and every other
+          status are refused before package execution.
+
+    - name: Install or upgrade the QEMU Guest Agent MSI
+      ansible.windows.win_package:
+        path: "{{ windows_qemu_guest_agent_effective_msi_path }}"
+        state: present
+        checksum: "{{ windows_qemu_guest_agent_msi_checksum }}"
+        checksum_algorithm: sha256
+      register: windows_qemu_guest_agent_package
+  always:
+    - name: Remove the transient HTTPS MSI
+      ansible.windows.win_file:
+        path: "{{ windows_qemu_guest_agent_download_path }}"
+        state: absent
+      when: windows_qemu_guest_agent_source == 'https'
+
+- name: Record package reboot requirements
+  ansible.builtin.set_fact:
+    windows_qemu_guest_agent_reboot_required: >-
+      {{ windows_qemu_guest_agent_package.reboot_required | default(false) | bool }}
+    windows_qemu_guest_agent_package_changed: >-
+      {{ windows_qemu_guest_agent_package.changed | default(false) | bool }}
+
+- name: Refuse to hide an MSI-required reboot
+  ansible.builtin.assert:
+    that:
+      - >-
+        not windows_qemu_guest_agent_reboot_required or
+        windows_qemu_guest_agent_reboot_policy != 'never'
+    fail_msg: >-
+      The QEMU Guest Agent MSI installed successfully but Windows reported that
+      a reboot is required. The default reboot_policy=never did not reboot the
+      guest. Reboot it in a maintenance window, then rerun verification. To
+      have Ansible perform this reboot, select if_required (or on_change)
+      before the first mutating launch.
+
+- name: Reboot after installation according to the explicit policy
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ windows_qemu_guest_agent_reboot_timeout }}"
+    post_reboot_delay: "{{ windows_qemu_guest_agent_post_reboot_delay }}"
+    msg: Ansible is rebooting Windows to finish QEMU Guest Agent installation.
+  when:
+    - windows_qemu_guest_agent_package_changed
+    - >-
+      windows_qemu_guest_agent_reboot_policy == 'on_change' or
+      (windows_qemu_guest_agent_reboot_policy == 'if_required' and
+       windows_qemu_guest_agent_reboot_required)
+
+- name: Ensure the QEMU Guest Agent service is automatic and running
+  ansible.windows.win_service:
+    name: "{{ windows_qemu_guest_agent_service_name }}"
+    start_mode: auto
+    state: started
+
+- name: Read the converged QEMU Guest Agent service
+  ansible.windows.win_service_info:
+    name: "{{ windows_qemu_guest_agent_service_name }}"
+  register: windows_qemu_guest_agent_service
+
+- name: Inspect the installed binary and version from the service path
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [Parameter(Mandatory = $true)]
+          [string]$ServiceName
+      )
+
+      $escaped = $ServiceName.Replace("'", "''")
+      $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$escaped'"
+      if (-not $service) {
+          throw "Service '$ServiceName' does not exist."
+      }
+      $match = [regex]::Match(
+          $service.PathName,
+          '^\s*(?:"(?<path>[^"]+)"|(?<path>[^\s]+))'
+      )
+      if (-not $match.Success) {
+          throw "Could not parse the service binary path."
+      }
+      $binaryPath = $match.Groups['path'].Value
+      if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
+          throw "QEMU Guest Agent binary '$binaryPath' does not exist."
+      }
+      $version = (Get-Item -LiteralPath $binaryPath).VersionInfo
+      $Ansible.Changed = $false
+      [PSCustomObject]@{
+          binary_path = $binaryPath
+          file_version = $version.FileVersion
+          product_version = $version.ProductVersion
+          service_state = $service.State
+          service_start_mode = $service.StartMode
+      }
+    parameters:
+      ServiceName: "{{ windows_qemu_guest_agent_service_name }}"
+  register: windows_qemu_guest_agent_binary
+
+- name: Require a running automatic service and a versioned binary
+  ansible.builtin.assert:
+    that:
+      - windows_qemu_guest_agent_service.exists
+      - windows_qemu_guest_agent_service.services | length == 1
+      - windows_qemu_guest_agent_service.services[0].state == 'started'
+      - windows_qemu_guest_agent_service.services[0].start_mode == 'auto'
+      - windows_qemu_guest_agent_binary.output | length == 1
+      - windows_qemu_guest_agent_binary.output[0].service_state == 'Running'
+      - windows_qemu_guest_agent_binary.output[0].service_start_mode == 'Auto'
+      - windows_qemu_guest_agent_binary.output[0].binary_path | length > 0
+      - >-
+        windows_qemu_guest_agent_binary.output[0].file_version |
+        default('') | length > 0
+      - >-
+        windows_qemu_guest_agent_expected_version | length == 0 or
+        windows_qemu_guest_agent_binary.output[0].file_version ==
+        windows_qemu_guest_agent_expected_version or
+        windows_qemu_guest_agent_binary.output[0].product_version ==
+        windows_qemu_guest_agent_expected_version
+    fail_msg: >-
+      QEMU-GA did not converge to an automatic/running service backed by a
+      versioned binary, or its exact file/product version did not match
+      expected_version. This role does not claim readiness on partial success.
+
+- name: Report the verified QEMU Guest Agent installation
+  ansible.builtin.debug:
+    msg: >-
+      QEMU Guest Agent is installed on {{ inventory_hostname }}:
+      service={{ windows_qemu_guest_agent_service_name }},
+      state={{ windows_qemu_guest_agent_service.services[0].state }},
+      binary={{ windows_qemu_guest_agent_binary.output[0].binary_path }},
+      file_version={{ windows_qemu_guest_agent_binary.output[0].file_version }}.
+      Verify end-to-end from Proxmox with `qm agent <vmid> ping` or the
+      equivalent authenticated PVE API call.

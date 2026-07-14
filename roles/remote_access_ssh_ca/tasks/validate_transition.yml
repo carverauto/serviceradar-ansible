@@ -1,0 +1,145 @@
+---
+- name: Inspect committed policy state and live ownership
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ sr_ra_state_dir }}/current-policy.json"
+    - "{{ sr_ra_state_dir }}/pending.json"
+    - /usr/local/libexec/serviceradar-ssh-ca-policy-digest
+    - /usr/local/libexec/serviceradar-ssh-ca-metadata-digest
+  register: sr_ra_transition_state
+
+- name: Read committed policy state
+  ansible.builtin.slurp:
+    src: "{{ sr_ra_state_dir }}/current-policy.json"
+  register: sr_ra_committed_policy_raw
+  changed_when: false
+  when: sr_ra_transition_state.results[0].stat.isreg | default(false)
+
+- name: Decode committed policy state
+  ansible.builtin.set_fact:
+    sr_ra_committed_policy: >-
+      {{ (sr_ra_committed_policy_raw.content | b64decode | from_json)
+         if not (sr_ra_committed_policy_raw.skipped | default(false)) else {} }}
+    sr_ra_current_ca_fingerprints: >-
+      {{ (sr_ra_committed_policy_raw.content | b64decode | from_json).get('ca_fingerprints', [])
+         if not (sr_ra_committed_policy_raw.skipped | default(false)) else [] }}
+  changed_when: false
+
+- name: Reject untracked or substituted existing role ownership
+  ansible.builtin.assert:
+    that:
+      - >-
+        not ((sr_ra_path_stats.results[4].stat.exists | default(false)) or
+             (sr_ra_path_stats.results[5].stat.exists | default(false)) or
+             (sr_ra_path_stats.results[6].stat.exists | default(false)) or
+             (sr_ra_path_stats.results[7].stat.exists | default(false))) or
+        (sr_ra_transition_state.results[0].stat.isreg | default(false)) or
+        (sr_ra_transition_state.results[1].stat.isreg | default(false) and
+         sr_ra_phase in ['verify', 'commit'])
+      - >-
+        not (sr_ra_transition_state.results[0].stat.isreg | default(false)) or
+        sr_ra_committed_policy.get('target_identity', {}) == sr_ra_target_identity
+    fail_msg: >-
+      Existing role-owned trust lacks matching committed/pending transaction
+      provenance. Reconcile it explicitly; do not adopt or replace it implicitly.
+
+- name: Compute current live role-owned files digest
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/serviceradar-ssh-ca-policy-digest]
+  register: sr_ra_committed_live_digest
+  changed_when: false
+  check_mode: false
+  when:
+    - sr_ra_transition_state.results[0].stat.isreg | default(false)
+    - >-
+      not (sr_ra_transition_state.results[1].stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Validate and digest current live role-owned security metadata
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/serviceradar-ssh-ca-metadata-digest
+      - "{{ sr_ra_committed_policy.get('state', 'invalid') }}"
+  register: sr_ra_committed_live_metadata
+  changed_when: false
+  check_mode: false
+  when:
+    - sr_ra_transition_state.results[0].stat.isreg | default(false)
+    - >-
+      not (sr_ra_transition_state.results[1].stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Reject drift from the committed role-owned policy
+  ansible.builtin.assert:
+    that:
+      - sr_ra_transition_state.results[2].stat.isreg | default(false)
+      - sr_ra_transition_state.results[3].stat.isreg | default(false)
+      - >-
+        sr_ra_committed_live_digest.stdout | trim ==
+        sr_ra_committed_policy.get('live_files_digest', '')
+      - >-
+        sr_ra_committed_live_metadata.stdout | trim ==
+        sr_ra_committed_policy.get('live_metadata_digest', '')
+    fail_msg: >-
+      Live role-owned SSH policy drifted from the committed generation.
+      Reconciliation is required before another mutation.
+  when:
+    - sr_ra_transition_state.results[0].stat.isreg | default(false)
+    - >-
+      not (sr_ra_transition_state.results[1].stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Calculate public CA set transition
+  ansible.builtin.set_fact:
+    sr_ra_desired_ca_fingerprints: >-
+      {{ sr_ra_ca_keys | map(attribute='fingerprint') | list | sort }}
+    sr_ra_added_ca_fingerprints: >-
+      {{ (sr_ra_ca_keys | map(attribute='fingerprint') | list) |
+         difference(sr_ra_current_ca_fingerprints) | sort }}
+    sr_ra_removed_ca_fingerprints: >-
+      {{ sr_ra_current_ca_fingerprints |
+         difference(sr_ra_ca_keys | map(attribute='fingerprint') | list) | sort }}
+  changed_when: false
+
+- name: Prevent enrollment from bypassing overlap or retirement gates
+  ansible.builtin.assert:
+    that:
+      - sr_ra_removed_ca_fingerprints | length == 0
+      - >-
+        sr_ra_current_ca_fingerprints | length == 0 or
+        sr_ra_added_ca_fingerprints | length == 0
+    fail_msg: >-
+      Enroll may create initial trust or be idempotent; adding a CA requires the
+      overlap operation and removing one requires proof-gated retirement.
+  when: sr_ra_operation == 'enroll'
+
+- name: Require overlap to be a strict public CA superset
+  ansible.builtin.assert:
+    that:
+      - sr_ra_current_ca_fingerprints | length > 0
+      - sr_ra_removed_ca_fingerprints | length == 0
+      - sr_ra_added_ca_fingerprints | length in [0, 1]
+      - >-
+        sr_ra_principal_policy_digest ==
+        sr_ra_committed_policy.get('principal_policy_version', '')
+    fail_msg: >-
+      Overlap must retain every committed CA; an exact rerun is idempotent.
+  when: sr_ra_operation == 'overlap'
+
+- name: Require retirement to remove and never add CA keys
+  ansible.builtin.assert:
+    that:
+      - sr_ra_current_ca_fingerprints | length > 1
+      - sr_ra_committed_policy.get('overlap_added_ca_fingerprints', []) | length == 1
+      - sr_ra_removed_ca_fingerprints | length > 0
+      - sr_ra_added_ca_fingerprints | length == 0
+      - sr_ra_desired_ca_fingerprints | length > 0
+      - >-
+        sr_ra_principal_policy_digest ==
+        sr_ra_committed_policy.get('principal_policy_version', '')
+    fail_msg: >-
+      Retirement must remove at least one committed CA, add none, and retain a
+      non-empty desired trust set.
+  when: sr_ra_operation == 'retire'

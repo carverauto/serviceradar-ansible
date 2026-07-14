@@ -1,0 +1,22 @@
+---
+# This example contains references and public fingerprints only. The separate
+# verification job must actually authenticate with a new-CA-signed SSH credential.
+sr_ra_direct_confirmation:
+  action: retire
+  target: example-linux-host
+  confirmed: true
+  retiring_fingerprints:
+    - SHA256:replace_with_old_public_ca_fingerprint
+  remaining_fingerprints:
+    - SHA256:replace_with_new_public_ca_fingerprint
+sr_ra_retirement_proof:
+  kind: controller_new_ca_ssh_login
+  verified: true
+  controller_proof_id: replace-with-controller-proof-reference
+  target_identity:
+    operator_target_id: example-linux-host
+  overlap_policy_digest: replace-with-committed-overlap-policy-digest
+  new_ca_fingerprint: SHA256:replace_with_new_public_ca_fingerprint
+  principal_policy_version: replace-with-policy-version
+  fresh_until: replace-with-RFC3339-expiry
+  fresh_until_epoch: 0  # Replace with a future Unix timestamp, at most one hour away.

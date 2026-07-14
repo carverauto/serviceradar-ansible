@@ -1,0 +1,11 @@
+# Direct constraints used to regenerate requirements-ci.lock with uv. CI installs
+# the fully resolved Python 3.12 lock with --require-hashes; update both in a
+# dedicated PR. Regenerate with:
+# uv pip compile requirements-ci.txt --python-version 3.12 --generate-hashes \
+#   --output-file requirements-ci.lock
+ansible-core==2.17.12
+ansible-lint==25.6.1
+molecule==25.6.0
+molecule-plugins[docker]==23.7.0
+pyyaml==6.0.3
+yamllint==1.37.1

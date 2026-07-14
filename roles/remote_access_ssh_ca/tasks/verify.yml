@@ -1,0 +1,96 @@
+---
+- name: Validate fresh verification job envelope
+  ansible.builtin.assert:
+    that:
+      - sr_ra_transaction is mapping
+      - sr_ra_transaction.get('id', '') | length > 0
+      - sr_ra_transaction.get('generation', '') | length > 0
+      - sr_ra_transaction.get('stage_job_id', '') | string | length > 0
+      - sr_ra_transaction.get('verification_job_id', '') | string | length > 0
+      - >-
+        sr_ra_transaction.get('verification_job_id', '') | string !=
+        sr_ra_transaction.get('stage_job_id', '') | string
+      - sr_ra_transaction.get('machine_credential_ref', '') | length > 0
+      - >-
+        sr_ra_transaction.get('machine_credential_ref', '') is
+        match('^(awx|controller)-credential-ref:[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$')
+      - >-
+        sr_ra_transaction.get('verification_job_id', '') | string is
+        match('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
+      - ansible_connection == 'ssh'
+      - not ansible_check_mode
+    fail_msg: >-
+      Verification must be a separate OpenSSH job using the snapshotted
+      machine-credential reference; a stage job cannot verify itself.
+
+- name: Read pending generation marker
+  ansible.builtin.slurp:
+    src: "{{ sr_ra_state_dir }}/pending.json"
+  register: sr_ra_pending_marker_raw
+  changed_when: false
+
+- name: Decode pending generation marker
+  ansible.builtin.set_fact:
+    sr_ra_pending_marker: "{{ sr_ra_pending_marker_raw.content | b64decode | from_json }}"
+  changed_when: false
+
+- name: Reject stale or substituted verification
+  ansible.builtin.assert:
+    that:
+      - sr_ra_pending_marker.transaction_id == sr_ra_transaction['id']
+      - sr_ra_pending_marker.generation == sr_ra_transaction['generation']
+      - sr_ra_pending_marker.stage_job_id | string == sr_ra_transaction['stage_job_id'] | string
+      - sr_ra_pending_marker.target_identity == sr_ra_target_identity
+      - >-
+        sr_ra_pending_marker.machine_credential_ref ==
+        sr_ra_transaction['machine_credential_ref']
+      - >-
+        sr_ra_pending_marker.policy_digest ==
+        (sr_ra_policy_digest | default('absent'))
+    fail_msg: Verification bindings do not exactly match the pending generation.
+
+- name: Compute exact live role-owned files digest
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/serviceradar-ssh-ca-policy-digest]
+  register: sr_ra_live_files_digest
+  changed_when: false
+  check_mode: false
+
+- name: Reject live files that differ from the staged canonical policy
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_pending_marker.expected_live_files_digest ==
+        sr_ra_expected_live_files_digest
+      - >-
+        sr_ra_live_files_digest.stdout | trim ==
+        sr_ra_pending_marker.expected_live_files_digest
+    fail_msg: >-
+      Live role-owned files changed after stage or do not match the canonical
+      desired policy; no connection proof was recorded.
+
+- name: Validate and digest exact live ownership, mode, ACL, and SELinux metadata
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/serviceradar-ssh-ca-metadata-digest
+      - "{{ sr_ra_state }}"
+  register: sr_ra_live_metadata_digest
+  changed_when: false
+  check_mode: false
+
+- name: Write bound fresh-session proof atomically
+  ansible.builtin.template:
+    src: connection-proof.json.j2
+    dest: "{{ sr_ra_state_dir }}/connection-proof.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Report verified generation awaiting commit
+  ansible.builtin.debug:
+    msg:
+      status: verified
+      transaction_id: "{{ sr_ra_transaction['id'] }}"
+      generation: "{{ sr_ra_transaction['generation'] }}"
+      policy_digest: "{{ sr_ra_pending_marker.policy_digest }}"
+      live_files_digest: "{{ sr_ra_live_files_digest.stdout | trim }}"

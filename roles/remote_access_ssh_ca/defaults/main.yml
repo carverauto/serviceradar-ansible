@@ -1,0 +1,43 @@
+---
+# Security mode and lifecycle phase. Root wrappers set these values; callers should
+# not include this role directly unless they preserve the same isolation contract.
+sr_ra_mode: direct
+sr_ra_phase: preflight
+sr_ra_state: present
+sr_ra_operation: enroll
+
+# Public user CA records. Each public_key must be a single OpenSSH public-key line
+# and fingerprint must be the corresponding `ssh-keygen -lf - -E sha256` value.
+sr_ra_ca_keys: []
+
+# Existing local accounts and their opaque, target-specific certificate principals.
+# Principals use `srp_v1_` plus at least 20 high-entropy base64url characters.
+sr_ra_accounts: []
+
+# Integrated mode supplies the immutable tuple from the callback response. Direct
+# mode uses an operator-selected opaque identity and makes no ServiceRadar claim.
+sr_ra_target_identity: {}
+
+# All mutating phases require an explicit, unique transaction envelope. It carries
+# references and digests, never a credential or private key.
+sr_ra_transaction: {}
+
+# ServiceRadar supplies integrated authorization results via its signed one-use
+# callback. Direct mode supplies explicit operator confirmations where documented.
+sr_ra_authorization: {}
+sr_ra_direct_confirmation: {}
+sr_ra_retirement_proof: {}
+
+# Fixed ownership boundary. Preflight rejects attempts to override these paths.
+sr_ra_trusted_ca_path: /etc/ssh/serviceradar/current/trusted-user-ca-keys.pub
+sr_ra_principals_dir: /etc/ssh/serviceradar/current/authorized-principals
+sr_ra_sshd_dropin_path: /etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf
+sr_ra_state_dir: /var/lib/serviceradar/remote-access-ssh-ca
+sr_ra_rollback_seconds: 600
+
+# Effective sshd context used for account-aware `sshd -T -C` validation.
+sr_ra_context_host: localhost
+sr_ra_context_addr: 127.0.0.1
+
+# Default-risk role intentionally excludes hypervisors and control-plane systems.
+sr_ra_target_risk: standard

@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Validate and digest ownership, modes, ACL xattrs, and SELinux xattrs."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+
+PARENT = Path("/etc/ssh/serviceradar")
+CURRENT = PARENT / "current"
+CA = CURRENT / "trusted-user-ca-keys.pub"
+PRINCIPALS = CURRENT / "authorized-principals"
+DROPIN = Path("/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf")
+
+
+def describe(path: Path, expected_mode: int) -> dict:
+    value = os.lstat(path)
+    if stat.S_ISLNK(value.st_mode):
+        raise RuntimeError(f"symlink is forbidden: {path}")
+    if value.st_uid != 0 or value.st_gid != 0:
+        raise RuntimeError(f"non-root ownership: {path}")
+    actual_mode = stat.S_IMODE(value.st_mode)
+    if actual_mode != expected_mode:
+        raise RuntimeError(f"mode {actual_mode:o}, expected {expected_mode:o}: {path}")
+    xattrs: dict[str, str] = {}
+    for name in sorted(os.listxattr(path, follow_symlinks=False)):
+        if name in {"system.posix_acl_access", "system.posix_acl_default"}:
+            raise RuntimeError(f"extended ACL is forbidden: {path}")
+        xattrs[name] = base64.b64encode(
+            os.getxattr(path, name, follow_symlinks=False)
+        ).decode("ascii")
+    return {
+        "gid": value.st_gid,
+        "mode": f"{actual_mode:04o}",
+        "path": str(path),
+        "uid": value.st_uid,
+        "xattrs": xattrs,
+    }
+
+
+def main() -> None:
+    if len(sys.argv) != 2 or sys.argv[1] not in {"present", "absent"}:
+        raise RuntimeError("usage: metadata-digest present|absent")
+    state = sys.argv[1]
+    records: list[dict] = []
+    if state == "absent":
+        if PARENT.exists() or PARENT.is_symlink() or DROPIN.exists() or DROPIN.is_symlink():
+            raise RuntimeError("role-owned policy remains in absent state")
+    else:
+        parent_entries = {path.name for path in PARENT.iterdir()}
+        if parent_entries != {"current"}:
+            raise RuntimeError(f"unexpected role-owned parent entries: {sorted(parent_entries)}")
+        current_entries = {path.name for path in CURRENT.iterdir()}
+        expected_current = {"trusted-user-ca-keys.pub", "authorized-principals"}
+        if current_entries != expected_current:
+            raise RuntimeError(
+                f"unexpected active generation entries: {sorted(current_entries)}"
+            )
+        records.extend(
+            [
+                describe(PARENT, 0o755),
+                describe(CURRENT, 0o755),
+                describe(CA, 0o644),
+                describe(PRINCIPALS, 0o755),
+                describe(DROPIN, 0o644),
+            ]
+        )
+        for path in sorted(PRINCIPALS.iterdir()):
+            if path.name.startswith(".") or not path.is_file():
+                raise RuntimeError(f"unexpected principal entry: {path}")
+            records.append(describe(path, 0o644))
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    print(hashlib.sha256(canonical).hexdigest())
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1) from error

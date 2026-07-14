@@ -1,0 +1,39 @@
+---
+namespace: serviceradar
+name: remote_access
+version: 0.1.0
+readme: README.md
+authors:
+  - ServiceRadar Authors
+description: Secure remote-access and guest automation for ServiceRadar operators.
+license:
+  - Apache-2.0
+tags:
+  - infrastructure
+  - security
+  - ssh
+  - windows
+  - qemu
+  - proxmox
+  - serviceradar
+repository: https://code.carverauto.dev/carverauto/serviceradar-ansible
+issues: https://code.carverauto.dev/carverauto/serviceradar-ansible/issues
+dependencies:
+  ansible.windows: ">=2.4.0,<3.0.0"
+build_ignore:
+  - .ansible
+  - .ansible-lint
+  - .cache
+  - .collections
+  - .forgejo
+  - .gitignore
+  - .molecule
+  - .venv
+  - .yamllint
+  - __pycache__
+  - molecule
+  - tests
+  - requirements-ci.txt
+  - requirements-ci.lock
+  - requirements.yml
+  - ansible.cfg

@@ -1,0 +1,367 @@
+---
+- name: Validate supported operating system release
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_facts['distribution'] == 'Ubuntu' and
+         ansible_facts['distribution_version'] in ['22.04', '24.04']) or
+        (ansible_facts['distribution'] == 'Debian' and
+         ansible_facts['distribution_major_version'] == '12') or
+        (ansible_facts['distribution'] == 'Rocky' and
+         ansible_facts['distribution_major_version'] == '9')
+      - ansible_facts['service_mgr'] == 'systemd'
+    fail_msg: >-
+      Supported targets are Ubuntu 22.04/24.04, Debian 12, and Rocky Linux 9
+      with systemd. Unknown derivatives fail closed.
+
+- name: Select the distribution sshd service
+  ansible.builtin.set_fact:
+    sr_ra_sshd_service: >-
+      {{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}
+    sr_ra_sshd_binary: /usr/sbin/sshd
+  changed_when: false
+
+- name: Validate integrated SSH transport
+  ansible.builtin.assert:
+    that:
+      - ansible_connection == 'ssh'
+      - sr_ra_authorization is mapping
+      - sr_ra_authorization.get('permissions', []) is sequence
+      - sr_ra_authorization.get('permissions', []) is not string
+      - sr_ra_authorization.get('permissions', []) |
+        reject('string') | list | length == 0
+      - >-
+        sr_ra_authorization.get('permissions', []) | unique | length ==
+        sr_ra_authorization.get('permissions', []) | length
+      - sr_ra_authorization.get('policy_approved', false) is sameas true
+      - "'ansible.runs.launch' in sr_ra_authorization.get('permissions', [])"
+      - >-
+        'devices.remote_access.ssh.ca_bundle.read' in
+        sr_ra_authorization.get('permissions', [])
+      - sr_ra_authorization.get('binding_verified', false) is sameas true
+    fail_msg: >-
+      Integrated mode requires an approved OpenSSH machine-credential launch,
+      both launch and CA-bundle permissions, and a verified immutable binding.
+  when: sr_ra_mode == 'integrated'
+
+- name: Validate integrated destructive authorization
+  ansible.builtin.assert:
+    that:
+      - >-
+        'devices.remote_access.ssh.ca_trust.retire' in
+        sr_ra_authorization.get('permissions', [])
+    fail_msg: CA retirement requires its separate ServiceRadar permission.
+  when:
+    - sr_ra_mode == 'integrated'
+    - sr_ra_operation == 'retire'
+
+- name: Validate integrated removal authorization
+  ansible.builtin.assert:
+    that:
+      - >-
+        'devices.remote_access.ssh.ca_trust.remove' in
+        sr_ra_authorization.get('permissions', [])
+    fail_msg: Offboarding requires its separate ServiceRadar removal permission.
+  when:
+    - sr_ra_mode == 'integrated'
+    - sr_ra_operation == 'remove'
+
+- name: Validate direct destructive confirmation
+  ansible.builtin.assert:
+    that:
+      - sr_ra_direct_confirmation is mapping
+      - sr_ra_direct_confirmation.get('action', '') == sr_ra_operation
+      - >-
+        sr_ra_direct_confirmation.get('target', '') ==
+        sr_ra_target_identity.get('operator_target_id', '')
+      - sr_ra_direct_confirmation.get('confirmed', false) is sameas true
+    fail_msg: >-
+      Direct retirement/removal requires an explicit controller-authorized
+      confirmation naming the action and operator target ID.
+  when:
+    - sr_ra_mode == 'direct'
+    - sr_ra_operation in ['retire', 'remove']
+
+- name: Validate immutable target identity shape
+  ansible.builtin.assert:
+    that:
+      - sr_ra_target_identity is mapping
+      - >-
+        (sr_ra_mode == 'integrated' and
+         sr_ra_target_identity.keys() |
+         difference(['controller_id', 'inventory_id', 'awx_host_id',
+                     'canonical_device_uid']) | length == 0 and
+         sr_ra_target_identity.get('controller_id', '') | length > 0 and
+         sr_ra_target_identity.get('inventory_id', '') | string | length > 0 and
+         sr_ra_target_identity.get('awx_host_id', '') | string | length > 0 and
+         sr_ra_target_identity.get('canonical_device_uid', '') | length > 0) or
+        (sr_ra_mode == 'direct' and
+         sr_ra_target_identity.keys() | difference(['operator_target_id']) |
+         length == 0 and
+         sr_ra_target_identity.get('operator_target_id', '') | length > 0)
+      - >-
+        sr_ra_target_identity.values() | map('string') |
+        reject('match', '^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$') |
+        list | length == 0
+    fail_msg: The authoritative target identity is incomplete.
+
+- name: Read systemd service inventory
+  ansible.builtin.service_facts:
+
+- name: Reject socket activation and ambiguous sshd instances
+  ansible.builtin.assert:
+    that:
+      - (sr_ra_sshd_service ~ '.service') in ansible_facts.services
+      - ansible_facts.services.get('ssh.socket', {}).get('state', 'inactive') != 'running'
+      - ansible_facts.services.get('sshd.socket', {}).get('state', 'inactive') != 'running'
+      - >-
+        ansible_facts.services | dict2items |
+        selectattr('key', 'match', '^(ssh|sshd)@.+\\.service$') |
+        selectattr('value.state', 'equalto', 'running') | list | length == 0
+    fail_msg: >-
+      A single non-socket-activated ssh/sshd systemd service is required.
+
+- name: Check sshd binary and fixed ownership paths without following links
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+  loop:
+    - /etc
+    - /etc/ssh
+    - /etc/ssh/sshd_config
+    - /etc/ssh/sshd_config.d
+    - /etc/ssh/serviceradar
+    - "{{ sr_ra_principals_dir }}"
+    - "{{ sr_ra_trusted_ca_path }}"
+    - "{{ sr_ra_sshd_dropin_path }}"
+    - /var
+    - /var/lib
+    - /var/lib/serviceradar
+    - "{{ sr_ra_state_dir }}"
+    - /usr
+    - /usr/local
+    - /usr/local/libexec
+    - /etc/systemd
+    - /etc/systemd/system
+    - /etc/ssh/serviceradar/current
+  register: sr_ra_path_stats
+
+- name: Reject symlinks and unsafe parents
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_path_stats.results |
+        selectattr('stat.islnk', 'defined') |
+        selectattr('stat.islnk', 'equalto', true) | list | length == 0
+      - sr_ra_path_stats.results[0].stat.isdir | default(false)
+      - sr_ra_path_stats.results[1].stat.isdir | default(false)
+      - sr_ra_path_stats.results[2].stat.isreg | default(false)
+      - sr_ra_path_stats.results[3].stat.isdir | default(false)
+      - sr_ra_path_stats.results[8].stat.isdir | default(false)
+      - sr_ra_path_stats.results[9].stat.isdir | default(false)
+      - sr_ra_path_stats.results[12].stat.isdir | default(false)
+      - sr_ra_path_stats.results[13].stat.isdir | default(false)
+      - >-
+        not (sr_ra_path_stats.results[14].stat.exists | default(false)) or
+        (sr_ra_path_stats.results[14].stat.isdir | default(false))
+      - sr_ra_path_stats.results[15].stat.isdir | default(false)
+      - sr_ra_path_stats.results[16].stat.isdir | default(false)
+      - >-
+        not (sr_ra_path_stats.results[17].stat.exists | default(false)) or
+        (sr_ra_path_stats.results[17].stat.isdir | default(false))
+    fail_msg: Role paths must have regular, non-symlink fixed parents.
+
+- name: Find all entries under the role-owned SSH policy tree
+  ansible.builtin.find:
+    paths: /etc/ssh/serviceradar
+    recurse: true
+    file_type: any
+    follow: false
+  register: sr_ra_owned_tree_entries
+  when: sr_ra_path_stats.results[4].stat.isdir | default(false)
+
+- name: Reject symlinks anywhere in the role-owned policy tree
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_owned_tree_entries.files | default([]) |
+        selectattr('islnk', 'defined') |
+        selectattr('islnk', 'equalto', true) | list | length == 0
+    fail_msg: Role-owned SSH policy tree contains a symlink.
+
+- name: Verify transaction helper runtime dependencies
+  ansible.builtin.command:
+    argv: ["{{ item }}", --version]
+  loop: [cp, flock, python3, bash]
+  register: sr_ra_runtime_dependencies
+  changed_when: false
+  check_mode: false
+
+- name: Require GNU metadata-preserving snapshot support
+  ansible.builtin.assert:
+    that:
+      - sr_ra_runtime_dependencies.results[0].stdout is search('GNU coreutils')
+    fail_msg: GNU cp with --preserve=all is required for exact rollback snapshots.
+
+- name: Read main sshd configuration
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config
+  register: sr_ra_main_sshd_config
+  changed_when: false
+
+- name: Validate supported include and Match layout
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sr_ra_main_sshd_config.content | b64decode |
+         regex_findall('(?im)^\\s*Include\\s+/etc/ssh/sshd_config\\.d/\\*\\.conf\\s*$') |
+         length) == 1
+      - >-
+        (sr_ra_main_sshd_config.content | b64decode |
+         regex_findall('(?im)^\\s*Include\\s+')) | length == 1
+      - >-
+        (sr_ra_main_sshd_config.content | b64decode |
+         regex_search('(?im)^\\s*Match\\s+')) is none
+    fail_msg: >-
+      sshd_config must contain exactly one standard drop-in Include and no Match
+      blocks. Match-aware environments require a separately reviewed route matrix.
+
+- name: Find unmanaged sshd drop-ins
+  ansible.builtin.find:
+    paths: /etc/ssh/sshd_config.d
+    patterns: "*.conf"
+    file_type: any
+    follow: false
+  register: sr_ra_sshd_dropins
+
+- name: Reject symlinked or non-regular sshd drop-ins
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_sshd_dropins.files |
+        rejectattr('isreg', 'defined') | list | length == 0
+      - >-
+        sr_ra_sshd_dropins.files |
+        rejectattr('isreg', 'equalto', true) | list | length == 0
+      - >-
+        sr_ra_sshd_dropins.files |
+        selectattr('islnk', 'defined') |
+        selectattr('islnk', 'equalto', true) | list | length == 0
+    fail_msg: Every *.conf drop-in must be one regular non-symlink file.
+
+- name: Read unmanaged sshd drop-ins
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ sr_ra_sshd_dropins.files }}"
+  when: item.path != sr_ra_sshd_dropin_path
+  register: sr_ra_unmanaged_dropin_content
+  changed_when: false
+
+- name: Reject ambiguous Match or CA directives in unmanaged drop-ins
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.content | b64decode |
+        regex_search('(?im)^\\s*(Include|Match|TrustedUserCAKeys|AuthorizedPrincipalsFile)\\s+') is none
+    fail_msg: >-
+      {{ item.source }} contains CA/principal/Match policy that this role will
+      not replace or merge implicitly.
+  loop: "{{ sr_ra_unmanaged_dropin_content.results | default([]) }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.content is defined
+
+- name: Validate baseline sshd syntax
+  ansible.builtin.command:
+    argv: ["{{ sr_ra_sshd_binary }}", -t, -f, /etc/ssh/sshd_config]
+  changed_when: false
+  check_mode: false
+
+- name: Read global effective sshd policy
+  ansible.builtin.command:
+    argv: ["{{ sr_ra_sshd_binary }}", -T, -f, /etc/ssh/sshd_config]
+  register: sr_ra_effective_global
+  changed_when: false
+  check_mode: false
+
+- name: Validate existing global CA ownership
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sr_ra_effective_global.stdout |
+         regex_findall('(?im)^trustedusercakeys\\s+(\\S+)$') |
+         first | default('none')) in ['none', sr_ra_trusted_ca_path]
+      - >-
+        (sr_ra_effective_global.stdout |
+         regex_findall('(?im)^authorizedprincipalsfile\\s+(.+)$') |
+         first | default('none')) in
+        ['none', sr_ra_principals_dir ~ '/%u']
+    fail_msg: >-
+      Effective sshd policy points at an unmanaged CA/principal source.
+
+- name: Detect FIPS mode
+  ansible.builtin.slurp:
+    src: /proc/sys/crypto/fips_enabled
+  register: sr_ra_fips_file
+  failed_when: false
+  changed_when: false
+
+- name: Record FIPS mode
+  ansible.builtin.set_fact:
+    sr_ra_fips_enabled: >-
+      {{ sr_ra_fips_file is succeeded and
+         (sr_ra_fips_file.content | default('MAo=') | b64decode | trim) == '1' }}
+  changed_when: false
+
+- name: Check SELinux restoration utility
+  ansible.builtin.stat:
+    path: /usr/sbin/restorecon
+    follow: false
+  register: sr_ra_restorecon_binary
+
+- name: Require SELinux metadata restoration support when enforcing
+  ansible.builtin.assert:
+    that:
+      - sr_ra_restorecon_binary.stat.isreg | default(false)
+    fail_msg: SELinux-enabled targets require /usr/sbin/restorecon.
+  when: ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
+
+- name: Validate requested policy records
+  ansible.builtin.include_tasks: validate_policy.yml
+  when: sr_ra_state == 'present'
+
+- name: Record exact expected absent policy digests
+  ansible.builtin.set_fact:
+    sr_ra_policy_digest: absent
+    sr_ra_principal_policy_digest: absent
+    sr_ra_expected_live_files_digest: >-
+      {{ {'ca_bundle': none, 'principals': none, 'sshd_dropin': none} |
+         to_json(sort_keys=true, separators=[',', ':']) | hash('sha256') }}
+  changed_when: false
+  when: sr_ra_state == 'absent'
+
+- name: Validate allowed CA set lifecycle transition
+  ansible.builtin.include_tasks: validate_transition.yml
+  when: sr_ra_state == 'present'
+
+- name: Validate retirement proof
+  ansible.builtin.include_tasks: validate_retirement.yml
+  when: sr_ra_operation == 'retire'
+
+- name: Validate exact destructive removal confirmation
+  ansible.builtin.include_tasks: validate_removal.yml
+  when: sr_ra_operation == 'remove'
+
+- name: Report successful read-only preflight
+  ansible.builtin.debug:
+    msg:
+      status: eligible
+      changed: false
+      mode: "{{ sr_ra_mode }}"
+      phase: "{{ sr_ra_phase }}"
+      operation: "{{ sr_ra_operation }}"
+      target_identity: "{{ sr_ra_target_identity }}"
+      platform: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+      sshd_service: "{{ sr_ra_sshd_service }}"
+      fips_enabled: "{{ sr_ra_fips_enabled }}"

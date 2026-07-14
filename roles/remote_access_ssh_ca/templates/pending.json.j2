@@ -1,0 +1,22 @@
+{{ {
+  'schema': 'serviceradar.remote_access.pending_ssh_policy/v1',
+  'transaction_id': sr_ra_transaction['id'],
+  'stage_job_id': sr_ra_transaction['stage_job_id'],
+  'generation': sr_ra_transaction['generation'],
+  'policy_digest': sr_ra_policy_digest | default('absent'),
+  'expected_live_files_digest': sr_ra_expected_live_files_digest,
+  'ca_fingerprints': (sr_ra_ca_keys | map(attribute='fingerprint') | list | sort)
+                     if sr_ra_state == 'present' else [],
+  'added_ca_fingerprints': sr_ra_added_ca_fingerprints | default([]),
+  'principal_policy_version': sr_ra_principal_policy_digest | default('absent'),
+  'accounts': sr_ra_accounts | map(attribute='name') | list | sort,
+  'context_host': sr_ra_context_host,
+  'context_addr': sr_ra_context_addr,
+  'sshd_service': sr_ra_sshd_service,
+  'state': sr_ra_state,
+  'operation': sr_ra_operation,
+  'mode': sr_ra_mode,
+  'target_identity': sr_ra_target_identity,
+  'machine_credential_ref': sr_ra_transaction['machine_credential_ref'],
+  'deadline_utc': sr_ra_rollback_deadline.stdout | trim
+} | to_nice_json }}

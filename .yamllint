@@ -1,0 +1,23 @@
+---
+extends: default
+ignore: |
+  .ansible/
+  .cache/
+  .collections/
+  .molecule/
+  .venv/
+rules:
+  braces:
+    max-spaces-inside: 1
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start: enable
+  line-length:
+    max: 120
+    level: warning
+  truthy:
+    allowed-values: ["true", "false"]
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

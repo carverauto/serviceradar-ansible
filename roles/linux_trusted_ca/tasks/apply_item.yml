@@ -1,0 +1,30 @@
+---
+- name: Set the exact trust anchor path
+  ansible.builtin.set_fact:
+    serviceradar_linux_trusted_ca_anchor_path: >-
+      {{ serviceradar_linux_trusted_ca_anchor_dir
+         ~ '/serviceradar-'
+         ~ serviceradar_linux_trusted_ca_item.name
+         ~ serviceradar_linux_trusted_ca_extension }}
+
+- name: Install the validated public CA atomically
+  ansible.builtin.copy:
+    content: "{{ serviceradar_linux_trusted_ca_item.certificate | trim }}\n"
+    dest: "{{ serviceradar_linux_trusted_ca_anchor_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  diff: false
+  when: serviceradar_linux_trusted_ca_item.state | default('present') == 'present'
+  notify:
+    - Refresh Linux CA trust
+    - Restart CA consumers
+
+- name: Remove an absent CA anchor
+  ansible.builtin.file:
+    path: "{{ serviceradar_linux_trusted_ca_anchor_path }}"
+    state: absent
+  when: serviceradar_linux_trusted_ca_item.state | default('present') == 'absent'
+  notify:
+    - Refresh Linux CA trust
+    - Restart CA consumers

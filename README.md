@@ -1,5 +1,141 @@
 # serviceradar-ansible
 
+Public Apache-2.0 automation for ServiceRadar operators. This repository now
+contains five independent content families:
+
+- Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
+- Trusted QEMU Guest Agent installation for Windows Proxmox/QEMU guests.
+- Fingerprint-pinned Linux system CA trust for private HTTPS integrations.
+- CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
+- Existing ServiceRadar agent installation and AWX connectivity playbooks.
+
+Repository CI runs on a repository-scoped, one-job public runner. Maintainers
+must complete the manual
+[`public runner isolation diagnostic`](docs/public-runner-isolation-diagnostic.md)
+before enabling normal public pull-request jobs on a new or rebuilt runner.
+
+## SSH remote-access enrollment
+
+The `serviceradar.remote_access` collection-compatible layout installs only
+public SSH user-CA trust and target-specific principals. It never contains,
+requests, or transports a CA private key. It also does not create accounts or
+change passwords, PAM, LDAP, sudo, host keys, or unrelated sshd policy.
+
+The safe lifecycle is intentionally split across AWX jobs:
+
+1. `preflight` validates OS, systemd/sshd layout, conflicts, accounts, public
+   key fingerprints, FIPS compatibility, and effective Match contexts without
+   changing the host.
+2. `stage` snapshots all role-owned state, validates a complete candidate,
+   atomically activates it, arms a persistent boot/deadline rollback guard,
+   validates the live daemon, and reloads (never restarts) sshd.
+3. `verify` runs as a separate SSH job with the snapshotted machine-credential
+   reference and writes a target/transaction/generation/files-digest proof.
+4. `commit` compares that proof under the same host lock used by rollback,
+   then disarms the guard. A missing or failed verify/commit rolls back.
+
+Supported targets are Ubuntu 22.04/24.04, Debian 12, and Rocky Linux 9 with a
+single non-socket-activated systemd ssh/sshd instance and the standard
+`/etc/ssh/sshd_config.d/*.conf` include. The first release fails closed on
+unknown layouts and higher-risk targets such as hypervisors.
+
+### Security modes
+
+`remote-access-direct-*.yml` wrappers are for operator-managed controllers.
+They accept explicit per-host public material and make no ServiceRadar RBAC,
+audit, canonical identity, or readiness claim.
+
+`remote-access-integrated-*.yml` wrappers are the only catalog-eligible paths.
+They call `remote_access.ssh_ca.bundle.read` once on the reviewed AWX execution
+environment using a one-use custom credential. They verify exact play-host and
+immutable `(controller, inventory, AWX host ID, canonical device UID)` tuple set
+equality before gathering target facts. Direct inputs cannot downgrade an
+integrated wrapper. The callback bearer and fleet response are never sent to a
+managed host or written to facts, artifacts, relaunch data, or logs.
+The callback also carries AWX's system-provided `JOB_ID`, read directly from the
+execution environment rather than injected by the custom credential, so a copy
+or relaunch cannot reuse another accepted job's grant.
+Before the callback, one controller-local task runs for every AWX-limited host
+to materialize the exact host-ID set in AWX without opening a managed-host
+connection; ServiceRadar activates the grant only after that set matches.
+
+Create the exact versioned custom credential type with the published
+[`inputs.json`](awx/credential-types/serviceradar-ephemeral-callback/v1/inputs.json)
+and
+[`injectors.json`](awx/credential-types/serviceradar-ephemeral-callback/v1/injectors.json),
+then generate the ServiceRadar binding digest from AWX's assigned type ID. The
+[operator guide](docs/awx-ephemeral-callback-credential.md) documents the UI/API
+workflow, canonical contract, and cross-language conformance vector. The
+artifacts contain definitions and placeholders only, never a live credential.
+
+Integrated launch requires both `ansible.runs.launch` and
+`devices.remote_access.ssh.ca_bundle.read`. Retirement additionally requires
+`devices.remote_access.ssh.ca_trust.retire` plus a fresh selected-edge login
+proof from the new CA. Removal additionally requires
+`devices.remote_access.ssh.ca_trust.remove`.
+
+See [the operator guide](docs/remote-access-ssh-ca.md),
+[`catalog/remote-access-ssh-ca.yml`](catalog/remote-access-ssh-ca.yml), and the
+non-secret examples in `examples/`. Production imports must pin a reviewed
+commit and content SHA256; do not bind AWX to a moving branch.
+
+The initial catalog metadata is deliberately gated with
+`production_import_ready: false`. Do not bind these integrated wrappers to a
+live ServiceRadar/AWX instance until the mutation/rollback matrix and the
+separate callback-grant and hardened-targeting dependencies pass together.
+
+## Windows QEMU Guest Agent
+
+`install-qemu-guest-agent-windows.yml` installs or upgrades the upstream QEMU
+Guest Agent MSI on an existing 64-bit Windows guest. It accepts either a pinned
+HTTPS `.msi` plus mandatory SHA-256, or an explicit MSI path on a mounted
+VirtIO CD-ROM. TLS validation is always enabled; Authenticode is required by
+default, with an explicit checksum-pinned mounted-ISO exception for upstream
+unsigned QGA MSI builds. After installation it configures `QEMU-GA` as
+automatic/running and verifies the service's actual binary and version.
+
+The playbook does not bootstrap Windows management, install the VirtIO serial
+driver, alter VM hardware, or hold a Proxmox credential. Enable the QGA channel
+on the exact VM and establish WinRM or Windows OpenSSH first. See the
+[Windows QGA operator guide](docs/windows-qemu-guest-agent.md), the
+[role interface](roles/windows_qemu_guest_agent/README.md), and the non-secret
+[inventory example](examples/windows-qemu-guest-agent-inventory.yml).
+The repository also includes a reproducible
+[`execution-environment.yml`](execution-environment.yml) that layers the pinned
+`ansible.windows 2.4.0` collection onto AWX EE 24.6.1. This keeps the collection
+inside that AWX release's supported Ansible Core 2.15 runtime.
+
+## Linux private-API CA trust
+
+`install-linux-trusted-ca.yml` installs or removes operator-supplied public CA
+certificates on Debian/Ubuntu or EL 9 hosts. A present certificate must be a
+valid `CA:TRUE` certificate and match its required SHA-256 DER fingerprint.
+The role never fetches a CA from the endpoint it is about to trust and never
+accepts a TLS-disable option. It validates the complete supplied CA set before
+making the first trust-store change and still performs that validation in
+Ansible check mode.
+
+This is intended for edge agents that call private HTTPS integrations such as
+Proxmox. It can restart exact named services after a trust-store change and
+then prove selected HTTPS URLs with normal certificate verification. Keep the
+public CA inputs immutable in a reviewed AWX job template, disable prompting
+for them, and launch the template from ServiceRadar rather than directly in AWX,
+against the exact canonical device limit. See the
+[role interface](roles/linux_trusted_ca/README.md).
+
+## Proxmox dynamic inventory
+
+`inventory/proxmox.proxmox.yml` discovers running guests with TLS verification
+enabled. The published AWX custom credential types support either direct access
+or a restricted, non-intercepting HTTPS CONNECT relay. Both inject a least-
+privilege API token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs
+in git or inventory variables. Use one AWX inventory per Proxmox cluster so
+reused PVE hostnames and VMIDs remain distinct through ServiceRadar's
+controller/inventory/host identity. See the
+[Proxmox inventory guide](docs/proxmox-dynamic-inventory.md).
+
+## Agent installation content
+
 Ansible playbooks for installing the [ServiceRadar](https://code.carverauto.dev/carverauto/serviceradar)
 agent on managed hosts. This repository is registered as a git playbook
 project in ServiceRadar/AWX; all playbooks live at the repository root so
@@ -12,6 +148,9 @@ the AWX project sync lists them.
 | `ping.yml` | Smoke test for the AWX -> device launch path. `ansible.builtin.ping` plus a fact-based debug line printing hostname, default IPv4, distro, and architecture. Read-only, no `become`. |
 | `install-agent-debian.yml` | Installs `serviceradar-agent` on Debian/Ubuntu hosts (`apt`, `.deb`). |
 | `install-agent-redhat.yml` | Installs `serviceradar-agent` on RHEL/Rocky/Alma/Fedora hosts (`dnf`/`dnf5`/`yum` via `ansible.builtin.package`, `.rpm`). |
+| `install-qemu-guest-agent-windows.yml` | Installs and verifies QEMU Guest Agent on a pre-bootstrapped Windows QEMU/Proxmox guest. |
+| `install-linux-trusted-ca.yml` | Installs or removes fingerprint-pinned public CA trust and optionally verifies private HTTPS endpoints. |
+| `qemu-guest-agent-windows-preflight.yml` | Read-only discovery of mounted QGA MSI path, SHA-256, and Authenticode status. |
 
 Both installers:
 
@@ -107,8 +246,8 @@ installed + service up.
 
 1. **Project**: this repository
    (`ssh://git@git.carverauto.dev/carverauto/serviceradar-ansible.git`,
-   branch `main`). Playbooks are at the repo root, so the project sync
-   lists all three.
+   branch `main`). Playbooks are at the repo root, so the project sync lists
+   every supported wrapper.
 2. **Inventory**: the ServiceRadar device inventory.
 3. **Job template (smoke)**: playbook `ping.yml`, machine credential for
    the device, **limit** = target hostname. No extra vars needed. Run

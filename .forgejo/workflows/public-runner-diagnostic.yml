@@ -1,0 +1,441 @@
+---
+name: controlled-public-runner-isolation-diagnostic
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact reviewed 40-character commit SHA to execute.
+        required: true
+        type: string
+      scenario:
+        description: >-
+          Controlled lifecycle case: success, forced-failure, timeout,
+          hold-for-cancel, hold-for-runner-crash, hold-for-host-restart, or
+          verify-clean.
+        required: true
+        default: success
+        type: string
+      previous_guest_id:
+        description: >-
+          Required only for verify-clean after cancellation or interruption;
+          copy the non-secret guest ID from the interrupted job log.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: controlled-public-runner-isolation-diagnostic
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  diagnostic:
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    timeout-minutes: 8
+    outputs:
+      guest_id: ${{ steps.identity.outputs.guest_id }}
+    steps:
+      - name: Assert controlled repository-scoped runner before checkout
+        id: identity
+        env:
+          DIAGNOSTIC_SCENARIO: ${{ github.event.inputs.scenario }}
+          EXPECTED_COMMIT: ${{ github.event.inputs.expected_commit }}
+          PREVIOUS_GUEST_ID: ${{ github.event.inputs.previous_guest_id }}
+        run: |
+          set -euo pipefail
+          python3 -I <<'PY'
+          import os
+          import pathlib
+          import subprocess
+
+          forbidden_environment = {
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+              "AWS_SESSION_TOKEN",
+              "AWS_WEB_IDENTITY_TOKEN_FILE",
+              "ALL_PROXY",
+              "AZURE_CLIENT_SECRET",
+              "AZURE_FEDERATED_TOKEN_FILE",
+              "BAO_TOKEN",
+              "COSIGN_KEY",
+              "COSIGN_KEY_REF",
+              "DOCKER_AUTH_CONFIG",
+              "DOCKER_CONFIG",
+              "FORGEJO_API_TOKEN",
+              "FORGEJO_RUNNER_REGISTRATION_TOKEN",
+              "FORGEJO_RUNNER_TOKEN",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "GOOGLE_OAUTH_ACCESS_TOKEN",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "KUBECONFIG",
+              "NO_PROXY",
+              "OPENBAO_TOKEN",
+              "REGISTRY_AUTH_FILE",
+              "SSH_ASKPASS",
+              "SSH_AUTH_SOCK",
+              "VAULT_TOKEN",
+              "all_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy",
+          }
+          if any(
+              name in forbidden_environment or name.startswith("GIT_")
+              for name in os.environ
+          ):
+              raise SystemExit(
+                  "forbidden pre-checkout environment category is present"
+              )
+          forgejo_token = os.environ.get("FORGEJO_TOKEN", "")
+          if not forgejo_token or forgejo_token != os.environ.get("GITHUB_TOKEN", ""):
+              raise SystemExit("automatic Forgejo job token aliases differ or are empty")
+
+          home = pathlib.Path(os.environ.get("HOME", ""))
+          if not home.is_absolute():
+              raise SystemExit("pre-checkout HOME boundary is invalid")
+          for relative in (
+              ".aws",
+              ".azure",
+              ".config/gcloud",
+              ".config/git/credentials",
+              ".curlrc",
+              ".docker/config.json",
+              ".git-credentials",
+              ".kube",
+              ".netrc",
+              ".ssh",
+          ):
+              candidate = home / relative
+              if candidate.exists() or candidate.is_symlink():
+                  raise SystemExit(
+                      "forbidden pre-checkout credential category is present"
+                  )
+
+          workspace_root = pathlib.Path("/run/forgejo-public-runner/workspace")
+          workspace = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ""))
+          try:
+              workspace_relative = workspace.relative_to(workspace_root)
+          except ValueError as exc:
+              raise SystemExit("pre-checkout workspace boundary is invalid") from exc
+          if (
+              not workspace_relative.parts
+              or ".." in workspace_relative.parts
+              or workspace_root.is_symlink()
+              or workspace_root.resolve(strict=False) != workspace_root
+              or workspace.resolve(strict=False) != workspace
+          ):
+              raise SystemExit("pre-checkout workspace boundary is invalid")
+          if workspace_root.exists():
+              try:
+                  stale_workspace = next(
+                      workspace_root.rglob(
+                          "serviceradar-public-runner-diagnostic-workspace-sentinel"
+                      ),
+                      None,
+                  )
+              except OSError as exc:
+                  raise SystemExit(
+                      "pre-checkout workspace state cannot be inspected"
+                  ) from exc
+              if stale_workspace is not None:
+                  raise SystemExit("prior-job workspace sentinel survived")
+
+          result = subprocess.run(
+              ["git", "config", "--null", "--name-only", "--list"],
+              check=False,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.DEVNULL,
+          )
+          if result.returncode != 0:
+              raise SystemExit("pre-checkout Git configuration cannot be inspected")
+          keys = result.stdout.decode("utf-8", "surrogateescape").split("\0")
+          dangerous_suffixes = (
+              ".cookiefile",
+              ".extraheader",
+              ".insteadof",
+              ".proxy",
+              ".pushinsteadof",
+              ".sslcert",
+              ".sslkey",
+          )
+          if any(
+              key.casefold().startswith(
+                  ("credential.", "filter.", "http.", "include.", "url.")
+              )
+              or key.casefold().startswith("includeif.")
+              or key.casefold() in {
+                  "core.alternaterefscommand",
+                  "core.askpass",
+                  "core.attributesfile",
+                  "core.fsmonitor",
+                  "core.fsmonitorhookversion",
+                  "core.gitproxy",
+                  "core.hookspath",
+                  "core.pager",
+                  "core.sshcommand",
+                  "core.worktree",
+                  "init.templatedir",
+              }
+              or (
+                  key.casefold().startswith("remote.")
+                  and key.casefold().rsplit(".", 1)[-1].startswith("proxy")
+              )
+              or key.casefold().endswith(dangerous_suffixes)
+              for key in keys
+              if key
+          ):
+              raise SystemExit(
+                  "Git configuration contains a pre-checkout credential or execution hook"
+              )
+          PY
+          test "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch"
+          [[ "${EXPECTED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${GITHUB_SHA:-}" = "${EXPECTED_COMMIT}"
+          test "${GITHUB_SERVER_URL:-}" = "https://code.carverauto.dev"
+          test "${GITHUB_REPOSITORY:-}" = "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_BOUNDARY:-}" = "public-ephemeral-lxc-v1"
+          test "${SERVICERADAR_RUNNER_REPOSITORY_ID:-}" = "85"
+          test "${SERVICERADAR_RUNNER_REPOSITORY:-}" = \
+            "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_LABEL:-}" = \
+            "serviceradar-public-ephemeral-ubuntu-24.04-20260701"
+          test "${SERVICERADAR_RUNNER_VERSION:-}" = "12.8.0"
+          [[ "${SERVICERADAR_RUNNER_GUEST_ID:-}" =~ \
+            ^serviceradar-public-job-[0-9]+-[0-9a-f]{8}$ ]]
+          test ! -S /run/forgejo-docker/docker.sock
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          test ! -e /etc/forgejo-public-runner/api-token
+          case "${DIAGNOSTIC_SCENARIO}" in
+            verify-clean)
+              [[ "${PREVIOUS_GUEST_ID:-}" =~ \
+                ^serviceradar-public-job-[0-9]+-[0-9a-f]{8}$ ]]
+              ;;
+            success|forced-failure|timeout|hold-for-cancel|\
+              hold-for-runner-crash|hold-for-host-restart)
+              test -z "${PREVIOUS_GUEST_ID:-}"
+              ;;
+            *)
+              echo "unsupported controlled diagnostic scenario" >&2
+              exit 2
+              ;;
+          esac
+          printf 'guest_id=%s\n' "${SERVICERADAR_RUNNER_GUEST_ID}" >> "${GITHUB_OUTPUT}"
+          printf 'source_commit=%s\n' "${EXPECTED_COMMIT}"
+          printf 'diagnostic_scenario=%s\n' "${DIAGNOSTIC_SCENARIO}"
+          printf 'runner_guest_id=%s\n' "${SERVICERADAR_RUNNER_GUEST_ID}"
+      - name: Check out reviewed diagnostic source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Run controlled isolation diagnostic
+        env:
+          DIAGNOSTIC_SCENARIO: ${{ github.event.inputs.scenario }}
+          EXPECTED_COMMIT: ${{ github.event.inputs.expected_commit }}
+          PREVIOUS_GUEST_ID: ${{ github.event.inputs.previous_guest_id }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_COMMIT}"
+          if [[ "${DIAGNOSTIC_SCENARIO}" == "verify-clean" ]]; then
+            scripts/public_runner_diagnostic.sh verify-clean \
+              "${PREVIOUS_GUEST_ID}"
+          else
+            scripts/public_runner_diagnostic.sh run "${DIAGNOSTIC_SCENARIO}"
+          fi
+
+  verify-next-guest:
+    needs: [diagnostic]
+    if: >-
+      ${{ always() && github.event.inputs.scenario != 'verify-clean' &&
+      github.event.inputs.scenario != 'hold-for-cancel' }}
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    timeout-minutes: 8
+    steps:
+      - name: Assert replacement guest before checkout
+        env:
+          EXPECTED_COMMIT: ${{ github.event.inputs.expected_commit }}
+          PREVIOUS_GUEST_ID: ${{ needs.diagnostic.outputs.guest_id }}
+        run: |
+          set -euo pipefail
+          python3 -I <<'PY'
+          import os
+          import pathlib
+          import subprocess
+
+          forbidden_environment = {
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+              "AWS_SESSION_TOKEN",
+              "AWS_WEB_IDENTITY_TOKEN_FILE",
+              "ALL_PROXY",
+              "AZURE_CLIENT_SECRET",
+              "AZURE_FEDERATED_TOKEN_FILE",
+              "BAO_TOKEN",
+              "COSIGN_KEY",
+              "COSIGN_KEY_REF",
+              "DOCKER_AUTH_CONFIG",
+              "DOCKER_CONFIG",
+              "FORGEJO_API_TOKEN",
+              "FORGEJO_RUNNER_REGISTRATION_TOKEN",
+              "FORGEJO_RUNNER_TOKEN",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "GOOGLE_OAUTH_ACCESS_TOKEN",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "KUBECONFIG",
+              "NO_PROXY",
+              "OPENBAO_TOKEN",
+              "REGISTRY_AUTH_FILE",
+              "SSH_ASKPASS",
+              "SSH_AUTH_SOCK",
+              "VAULT_TOKEN",
+              "all_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy",
+          }
+          if any(
+              name in forbidden_environment or name.startswith("GIT_")
+              for name in os.environ
+          ):
+              raise SystemExit(
+                  "forbidden pre-checkout environment category is present"
+              )
+          forgejo_token = os.environ.get("FORGEJO_TOKEN", "")
+          if not forgejo_token or forgejo_token != os.environ.get("GITHUB_TOKEN", ""):
+              raise SystemExit("automatic Forgejo job token aliases differ or are empty")
+
+          home = pathlib.Path(os.environ.get("HOME", ""))
+          if not home.is_absolute():
+              raise SystemExit("pre-checkout HOME boundary is invalid")
+          for relative in (
+              ".aws",
+              ".azure",
+              ".config/gcloud",
+              ".config/git/credentials",
+              ".curlrc",
+              ".docker/config.json",
+              ".git-credentials",
+              ".kube",
+              ".netrc",
+              ".ssh",
+          ):
+              candidate = home / relative
+              if candidate.exists() or candidate.is_symlink():
+                  raise SystemExit(
+                      "forbidden pre-checkout credential category is present"
+                  )
+
+          workspace_root = pathlib.Path("/run/forgejo-public-runner/workspace")
+          workspace = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ""))
+          try:
+              workspace_relative = workspace.relative_to(workspace_root)
+          except ValueError as exc:
+              raise SystemExit("pre-checkout workspace boundary is invalid") from exc
+          if (
+              not workspace_relative.parts
+              or ".." in workspace_relative.parts
+              or workspace_root.is_symlink()
+              or workspace_root.resolve(strict=False) != workspace_root
+              or workspace.resolve(strict=False) != workspace
+          ):
+              raise SystemExit("pre-checkout workspace boundary is invalid")
+          if workspace_root.exists():
+              try:
+                  stale_workspace = next(
+                      workspace_root.rglob(
+                          "serviceradar-public-runner-diagnostic-workspace-sentinel"
+                      ),
+                      None,
+                  )
+              except OSError as exc:
+                  raise SystemExit(
+                      "pre-checkout workspace state cannot be inspected"
+                  ) from exc
+              if stale_workspace is not None:
+                  raise SystemExit("prior-job workspace sentinel survived")
+
+          result = subprocess.run(
+              ["git", "config", "--null", "--name-only", "--list"],
+              check=False,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.DEVNULL,
+          )
+          if result.returncode != 0:
+              raise SystemExit("pre-checkout Git configuration cannot be inspected")
+          keys = result.stdout.decode("utf-8", "surrogateescape").split("\0")
+          dangerous_suffixes = (
+              ".cookiefile",
+              ".extraheader",
+              ".insteadof",
+              ".proxy",
+              ".pushinsteadof",
+              ".sslcert",
+              ".sslkey",
+          )
+          if any(
+              key.casefold().startswith(
+                  ("credential.", "filter.", "http.", "include.", "url.")
+              )
+              or key.casefold().startswith("includeif.")
+              or key.casefold() in {
+                  "core.alternaterefscommand",
+                  "core.askpass",
+                  "core.attributesfile",
+                  "core.fsmonitor",
+                  "core.fsmonitorhookversion",
+                  "core.gitproxy",
+                  "core.hookspath",
+                  "core.pager",
+                  "core.sshcommand",
+                  "core.worktree",
+                  "init.templatedir",
+              }
+              or (
+                  key.casefold().startswith("remote.")
+                  and key.casefold().rsplit(".", 1)[-1].startswith("proxy")
+              )
+              or key.casefold().endswith(dangerous_suffixes)
+              for key in keys
+              if key
+          ):
+              raise SystemExit(
+                  "Git configuration contains a pre-checkout credential or execution hook"
+              )
+          PY
+          [[ "${EXPECTED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${GITHUB_SHA:-}" = "${EXPECTED_COMMIT}"
+          test "${GITHUB_SERVER_URL:-}" = "https://code.carverauto.dev"
+          [[ "${PREVIOUS_GUEST_ID:-}" =~ \
+            ^serviceradar-public-job-[0-9]+-[0-9a-f]{8}$ ]]
+          [[ "${SERVICERADAR_RUNNER_GUEST_ID:-}" =~ \
+            ^serviceradar-public-job-[0-9]+-[0-9a-f]{8}$ ]]
+          test "${SERVICERADAR_RUNNER_GUEST_ID}" != "${PREVIOUS_GUEST_ID}"
+          test "${SERVICERADAR_RUNNER_BOUNDARY:-}" = "public-ephemeral-lxc-v1"
+          test "${SERVICERADAR_RUNNER_REPOSITORY_ID:-}" = "85"
+          test ! -S /run/forgejo-docker/docker.sock
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          test ! -e /etc/forgejo-public-runner/api-token
+          printf 'previous_runner_guest_id=%s\n' "${PREVIOUS_GUEST_ID}"
+          printf 'replacement_runner_guest_id=%s\n' \
+            "${SERVICERADAR_RUNNER_GUEST_ID}"
+      - name: Check out reviewed diagnostic source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prove terminal cleanup in a fresh guest
+        env:
+          EXPECTED_COMMIT: ${{ github.event.inputs.expected_commit }}
+          PREVIOUS_GUEST_ID: ${{ needs.diagnostic.outputs.guest_id }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_COMMIT}"
+          scripts/public_runner_diagnostic.sh verify-clean \
+            "${PREVIOUS_GUEST_ID}"

@@ -1,0 +1,15 @@
+---
+- name: Direct controller SSH CA read-only preflight
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Run direct preflight role
+      ansible.builtin.include_role:
+        name: remote_access_ssh_ca
+      vars:
+        sr_ra_mode: direct
+        sr_ra_phase: preflight
+        sr_ra_state: present
+        sr_ra_operation: enroll

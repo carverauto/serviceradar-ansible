@@ -1,0 +1,72 @@
+---
+- name: Read committed policy selected for removal
+  ansible.builtin.slurp:
+    src: "{{ sr_ra_state_dir }}/current-policy.json"
+  register: sr_ra_removal_policy_raw
+  changed_when: false
+
+- name: Decode committed policy selected for removal
+  ansible.builtin.set_fact:
+    sr_ra_removal_policy: "{{ sr_ra_removal_policy_raw.content | b64decode | from_json }}"
+  changed_when: false
+
+- name: Check for a pending staged removal generation
+  ansible.builtin.stat:
+    path: "{{ sr_ra_state_dir }}/pending.json"
+    follow: false
+  register: sr_ra_removal_pending
+
+- name: Require exact target and non-absent committed policy for removal
+  ansible.builtin.assert:
+    that:
+      - sr_ra_removal_policy.target_identity == sr_ra_target_identity
+      - sr_ra_removal_policy.state == 'present'
+      - sr_ra_removal_policy.policy_digest | length == 64
+    fail_msg: Offboarding requires the exact committed role-owned target policy.
+
+- name: Digest live policy selected for removal
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/serviceradar-ssh-ca-policy-digest]
+  register: sr_ra_removal_live_files
+  changed_when: false
+  check_mode: false
+  when:
+    - >-
+      not (sr_ra_removal_pending.stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Validate live security metadata selected for removal
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/serviceradar-ssh-ca-metadata-digest, present]
+  register: sr_ra_removal_live_metadata
+  changed_when: false
+  check_mode: false
+  when:
+    - >-
+      not (sr_ra_removal_pending.stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Reject drift before destructive removal
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_removal_live_files.stdout | trim ==
+        sr_ra_removal_policy.live_files_digest
+      - >-
+        sr_ra_removal_live_metadata.stdout | trim ==
+        sr_ra_removal_policy.live_metadata_digest
+    fail_msg: Live policy or metadata drifted from the confirmed removal digest.
+  when:
+    - >-
+      not (sr_ra_removal_pending.stat.isreg | default(false)) or
+      sr_ra_phase not in ['verify', 'commit']
+
+- name: Bind direct destructive confirmation to the exact live policy digest
+  ansible.builtin.assert:
+    that:
+      - >-
+        sr_ra_direct_confirmation.get('policy_digest', '') ==
+        sr_ra_removal_policy.policy_digest
+    fail_msg: >-
+      Direct offboarding confirmation must name the exact committed policy digest.
+  when: sr_ra_mode == 'direct'

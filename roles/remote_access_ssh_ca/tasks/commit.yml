@@ -1,0 +1,27 @@
+---
+- name: Validate commit transaction envelope
+  ansible.builtin.assert:
+    that:
+      - sr_ra_transaction is mapping
+      - sr_ra_transaction.get('id', '') | length > 0
+      - sr_ra_transaction.get('generation', '') | length > 0
+      - sr_ra_transaction.get('machine_credential_ref', '') | length > 0
+      - >-
+        sr_ra_transaction.get('machine_credential_ref', '') is
+        match('^(awx|controller)-credential-ref:[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$')
+      - not ansible_check_mode
+    fail_msg: Commit requires the exact verified transaction bindings.
+
+- name: Atomically compare proof and commit under the host transaction lock
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/serviceradar-ssh-ca-commit
+      - "{{ sr_ra_transaction['id'] }}"
+      - "{{ sr_ra_transaction['generation'] }}"
+      - "{{ sr_ra_policy_digest | default('absent') }}"
+  register: sr_ra_commit_result
+  changed_when: sr_ra_commit_result.rc == 0
+
+- name: Report committed generation
+  ansible.builtin.debug:
+    msg: "{{ sr_ra_commit_result.stdout | from_json }}"

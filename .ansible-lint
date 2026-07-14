@@ -1,0 +1,14 @@
+---
+profile: production
+exclude_paths:
+  - .ansible/
+  - .cache/
+  - .collections/
+  - .venv/
+  - molecule/*/.cache/
+mock_roles: []
+# `sr_ra_*` is the documented collection-wide compatibility contract used by
+# both direct playbooks and the immutable ServiceRadar wrappers. Renaming it to
+# the role directory would break that public interface without improving scope.
+skip_list:
+  - var-naming[no-role-prefix]

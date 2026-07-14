@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Atomically commit a verified SSH policy generation under the host lock."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import datetime as dt
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+STATE = Path("/var/lib/serviceradar/remote-access-ssh-ca")
+MARKER = STATE / "pending.json"
+PROOF = STATE / "connection-proof.json"
+CURRENT = STATE / "current-policy.json"
+LOCK = STATE / "transaction.lock"
+CA_PATH = Path("/etc/ssh/serviceradar/current/trusted-user-ca-keys.pub")
+DROPIN_PATH = Path("/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf")
+PRINCIPALS_PATH = Path("/etc/ssh/serviceradar/current/authorized-principals")
+CURRENT_PATH = Path("/etc/ssh/serviceradar/current")
+
+
+def load(path: Path) -> dict:
+    with path.open(encoding="utf-8") as source:
+        value = json.load(source)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"invalid object: {path}")
+    return value
+
+
+def read_regular(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"unsafe role-owned path: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def live_digest() -> str:
+    if CURRENT_PATH.is_symlink():
+        raise RuntimeError(f"unsafe role-owned path: {CURRENT_PATH}")
+    principals: dict[str, str] | None = None
+    if PRINCIPALS_PATH.exists():
+        if PRINCIPALS_PATH.is_symlink() or not PRINCIPALS_PATH.is_dir():
+            raise RuntimeError(f"unsafe role-owned path: {PRINCIPALS_PATH}")
+        principals = {}
+        for path in sorted(PRINCIPALS_PATH.iterdir()):
+            if path.name.startswith("."):
+                raise RuntimeError(f"unexpected hidden principal path: {path}")
+            value = read_regular(path)
+            if value is None:
+                raise RuntimeError(f"unexpected principal path: {path}")
+            principals[path.name] = value
+    policy = {
+        "ca_bundle": read_regular(CA_PATH),
+        "principals": principals,
+        "sshd_dropin": read_regular(DROPIN_PATH),
+    }
+    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def atomic_json(path: Path, value: dict) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(value, output, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def main() -> None:
+    if len(sys.argv) != 4:
+        raise RuntimeError("usage: commit TRANSACTION GENERATION POLICY_DIGEST")
+    expected_transaction, expected_generation, expected_policy = sys.argv[1:]
+    STATE.mkdir(parents=True, exist_ok=True)
+    with LOCK.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        marker = load(MARKER)
+        proof = load(PROOF)
+        commit_deadline = dt.datetime.strptime(
+            marker["deadline_utc"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=dt.timezone.utc)
+        comparisons = {
+            "transaction": marker.get("transaction_id") == expected_transaction
+            and proof.get("transaction_id") == expected_transaction,
+            "generation": marker.get("generation") == expected_generation
+            and proof.get("generation") == expected_generation,
+            "policy": marker.get("policy_digest") == expected_policy
+            and proof.get("policy_digest") == expected_policy,
+            "target": marker.get("target_identity") == proof.get("target_identity"),
+            "credential": marker.get("machine_credential_ref")
+            == proof.get("machine_credential_ref"),
+            "live_files": proof.get("live_files_digest") == live_digest(),
+            "expected_files": proof.get("live_files_digest")
+            == marker.get("expected_live_files_digest"),
+            "live_metadata": proof.get("live_metadata_digest")
+            == subprocess.run(
+                ["/usr/local/libexec/serviceradar-ssh-ca-metadata-digest", marker["state"]],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip(),
+            "fresh_job": proof.get("verification_job_id") != marker.get("stage_job_id"),
+            "before_deadline": dt.datetime.now(dt.timezone.utc) < commit_deadline,
+        }
+        if not all(comparisons.values()):
+            failed = sorted(key for key, value in comparisons.items() if not value)
+            raise RuntimeError("commit binding mismatch: " + ",".join(failed))
+
+        subprocess.run(
+            ["/usr/sbin/sshd", "-t", "-f", "/etc/ssh/sshd_config"], check=True
+        )
+        if dt.datetime.now(dt.timezone.utc) >= commit_deadline:
+            raise RuntimeError("commit deadline expired during validation")
+        previous_current = load(CURRENT) if CURRENT.exists() else None
+        atomic_json(
+            CURRENT,
+            {
+                "schema": "serviceradar.remote_access.current_ssh_policy/v1",
+                "generation": marker["generation"],
+                "policy_digest": marker["policy_digest"],
+                "ca_fingerprints": marker["ca_fingerprints"],
+                "overlap_added_ca_fingerprints": (
+                    marker["added_ca_fingerprints"]
+                    if marker["operation"] == "overlap"
+                    else []
+                ),
+                "principal_policy_version": marker["principal_policy_version"],
+                "state": marker["state"],
+                "target_identity": marker["target_identity"],
+                "live_files_digest": proof["live_files_digest"],
+                "live_metadata_digest": proof["live_metadata_digest"],
+            },
+        )
+        if dt.datetime.now(dt.timezone.utc) >= commit_deadline:
+            if previous_current is None:
+                CURRENT.unlink(missing_ok=True)
+            else:
+                atomic_json(CURRENT, previous_current)
+            raise RuntimeError("commit deadline expired before commit point")
+        MARKER.unlink()
+        subprocess.run(
+            ["systemctl", "disable", "--now", "serviceradar-ssh-ca-rollback.timer"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["systemctl", "disable", "serviceradar-ssh-ca-rollback.service"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        PROOF.unlink()
+        shutil.rmtree(STATE / "pending-reservation", ignore_errors=True)
+        shutil.rmtree(STATE / "transactions" / expected_transaction, ignore_errors=True)
+        print(json.dumps({"status": "committed", "transaction_id": expected_transaction}))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:  # The caller receives a bounded non-secret reason.
+        print(json.dumps({"status": "commit_rejected", "reason": str(error)}), file=sys.stderr)
+        raise SystemExit(1) from error

@@ -1,0 +1,39 @@
+---
+argument_specs:
+  main:
+    short_description: Install fingerprint-pinned public CA certificates into Linux system trust.
+    options:
+      serviceradar_linux_trusted_ca_certificates:
+        type: list
+        elements: dict
+        required: true
+        options:
+          name:
+            type: str
+            required: true
+          state:
+            type: str
+            choices: [present, absent]
+            default: present
+          certificate:
+            type: str
+          sha256_fingerprint:
+            type: str
+      serviceradar_linux_trusted_ca_verify_urls:
+        type: list
+        elements: str
+        default: []
+      serviceradar_linux_trusted_ca_verify_status_codes:
+        type: list
+        elements: int
+        default: [200, 401, 403]
+      serviceradar_linux_trusted_ca_verify_timeout:
+        type: int
+        default: 10
+      serviceradar_linux_trusted_ca_restart_services:
+        type: list
+        elements: str
+        default: []
+      serviceradar_linux_trusted_ca_checkend_seconds:
+        type: int
+        default: 86400

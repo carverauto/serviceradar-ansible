@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Activate one complete SSH CA policy generation under the rollback lock."""
+
+from __future__ import annotations
+
+import ctypes
+import datetime as dt
+import fcntl
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+STATE = Path("/var/lib/serviceradar/remote-access-ssh-ca")
+MARKER = STATE / "pending.json"
+LOCK = STATE / "transaction.lock"
+LIVE_PARENT = Path("/etc/ssh/serviceradar")
+LIVE_CURRENT = LIVE_PARENT / "current"
+DROPIN = Path("/etc/ssh/sshd_config.d/10-serviceradar-remote-access.conf")
+SSHD = "/usr/sbin/sshd"
+RENAME_EXCHANGE = 2
+AT_FDCWD = -100
+
+
+def load(path: Path) -> dict:
+    with path.open(encoding="utf-8") as source:
+        value = json.load(source)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"invalid object: {path}")
+    return value
+
+
+def deadline(marker: dict) -> dt.datetime:
+    return dt.datetime.strptime(marker["deadline_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=dt.timezone.utc
+    )
+
+
+def ensure_before_deadline(marker: dict) -> None:
+    if dt.datetime.now(dt.timezone.utc) >= deadline(marker):
+        raise RuntimeError("stage deadline expired")
+
+
+def atomic_text(path: Path, content: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, mode)
+        for name in ("system.posix_acl_access", "system.posix_acl_default"):
+            try:
+                os.removexattr(temporary, name, follow_symlinks=False)
+            except OSError:
+                pass
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def exchange_directories(left: Path, right: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    libc.renameat2.restype = ctypes.c_int
+    result = libc.renameat2(
+        AT_FDCWD,
+        os.fsencode(left),
+        AT_FDCWD,
+        os.fsencode(right),
+        RENAME_EXCHANGE,
+    )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), f"{left} <-> {right}")
+
+
+def restore_snapshot(transaction: str, service: str) -> None:
+    snapshot = STATE / "transactions" / transaction / "snapshot"
+    shutil.rmtree(LIVE_PARENT, ignore_errors=True)
+    DROPIN.unlink(missing_ok=True)
+    if (snapshot / "serviceradar").exists():
+        subprocess.run(
+            ["cp", "-a", "--preserve=all", "--", snapshot / "serviceradar", LIVE_PARENT],
+            check=True,
+        )
+    if (snapshot / DROPIN.name).exists():
+        subprocess.run(
+            ["cp", "-a", "--preserve=all", "--", snapshot / DROPIN.name, DROPIN],
+            check=True,
+        )
+    subprocess.run([SSHD, "-t", "-f", "/etc/ssh/sshd_config"], check=True)
+    subprocess.run(["systemctl", "reload", service], check=True)
+
+
+def validate_effective(marker: dict) -> None:
+    subprocess.run([SSHD, "-t", "-f", "/etc/ssh/sshd_config"], check=True)
+    if marker["state"] == "absent":
+        return
+    expected_ca = "trustedusercakeys /etc/ssh/serviceradar/current/trusted-user-ca-keys.pub"
+    expected_principals = (
+        "authorizedprincipalsfile "
+        "/etc/ssh/serviceradar/current/authorized-principals/%u"
+    )
+    for account in marker["accounts"]:
+        completed = subprocess.run(
+            [
+                SSHD,
+                "-T",
+                "-f",
+                "/etc/ssh/sshd_config",
+                "-C",
+                f"user={account},host={marker['context_host']},addr={marker['context_addr']}",
+            ],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        effective = set(completed.stdout.lower().splitlines())
+        if expected_ca not in effective or expected_principals not in effective:
+            raise RuntimeError(f"effective policy mismatch for {account}")
+
+
+def activate_present(transaction: str) -> None:
+    candidate = STATE / "transactions" / transaction / "candidate" / "serviceradar"
+    if not candidate.is_dir():
+        raise RuntimeError("candidate public policy tree missing")
+    LIVE_PARENT.mkdir(parents=True, exist_ok=True, mode=0o755)
+    os.chown(LIVE_PARENT, 0, 0)
+    next_path = LIVE_PARENT / f".next-{transaction}"
+    shutil.rmtree(next_path, ignore_errors=True)
+    shutil.copytree(candidate, next_path, copy_function=shutil.copy2)
+    for path in [next_path, next_path / "authorized-principals"]:
+        os.chown(path, 0, 0)
+        os.chmod(path, 0o755)
+    for path in next_path.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(f"candidate contains symlink: {path}")
+        os.chown(path, 0, 0)
+        if path.is_file():
+            os.chmod(path, 0o644)
+        for name in ("system.posix_acl_access", "system.posix_acl_default"):
+            try:
+                os.removexattr(path, name, follow_symlinks=False)
+            except OSError:
+                pass
+    if LIVE_CURRENT.exists():
+        if not LIVE_CURRENT.is_dir() or LIVE_CURRENT.is_symlink():
+            raise RuntimeError("unsafe active generation path")
+        exchange_directories(LIVE_CURRENT, next_path)
+    else:
+        os.replace(next_path, LIVE_CURRENT)
+    for path in (LIVE_PARENT, LIVE_CURRENT):
+        os.chown(path, 0, 0)
+        os.chmod(path, 0o755)
+        for name in ("system.posix_acl_access", "system.posix_acl_default"):
+            try:
+                os.removexattr(path, name, follow_symlinks=False)
+            except OSError:
+                pass
+    shutil.rmtree(next_path, ignore_errors=True)
+    atomic_text(
+        DROPIN,
+        "# Managed by ServiceRadar Ansible content. Do not edit.\n"
+        "TrustedUserCAKeys /etc/ssh/serviceradar/current/trusted-user-ca-keys.pub\n"
+        "AuthorizedPrincipalsFile "
+        "/etc/ssh/serviceradar/current/authorized-principals/%u",
+        0o644,
+    )
+    if shutil.which("restorecon"):
+        subprocess.run(["restorecon", "-RF", LIVE_PARENT, DROPIN], check=True)
+
+
+def activate_absent(transaction: str) -> None:
+    removed = Path(f"/etc/ssh/.serviceradar-removed-{transaction}")
+    shutil.rmtree(removed, ignore_errors=True)
+    DROPIN.unlink(missing_ok=True)
+    if LIVE_PARENT.exists():
+        os.replace(LIVE_PARENT, removed)
+    shutil.rmtree(removed, ignore_errors=True)
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        raise RuntimeError("usage: activate TRANSACTION")
+    transaction = sys.argv[1]
+    with LOCK.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        marker = load(MARKER)
+        if marker.get("transaction_id") != transaction:
+            raise RuntimeError("transaction mismatch")
+        ensure_before_deadline(marker)
+        try:
+            if marker["state"] == "present":
+                activate_present(transaction)
+            else:
+                activate_absent(transaction)
+            ensure_before_deadline(marker)
+            validate_effective(marker)
+            ensure_before_deadline(marker)
+            subprocess.run(["systemctl", "reload", marker["sshd_service"]], check=True)
+            ensure_before_deadline(marker)
+        except Exception:
+            try:
+                restore_snapshot(transaction, marker["sshd_service"])
+            except Exception as restore_error:
+                print(
+                    json.dumps(
+                        {
+                            "status": "critical_manual_recovery",
+                            "transaction_id": transaction,
+                            "reason": str(restore_error),
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+            raise
+        print(json.dumps({"status": "staged", "transaction_id": transaction}))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({"status": "stage_rejected", "reason": str(error)}), file=sys.stderr)
+        raise SystemExit(1) from error

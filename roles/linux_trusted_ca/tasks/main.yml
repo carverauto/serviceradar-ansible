@@ -1,0 +1,149 @@
+---
+- name: Validate Linux CA trust role inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family in ['Debian', 'RedHat']
+      - serviceradar_linux_trusted_ca_certificates is sequence
+      - serviceradar_linux_trusted_ca_certificates is not string
+      - serviceradar_linux_trusted_ca_certificates | length > 0
+      - serviceradar_linux_trusted_ca_certificates | length <= 32
+      - serviceradar_linux_trusted_ca_verify_urls is sequence
+      - serviceradar_linux_trusted_ca_verify_urls is not string
+      - serviceradar_linux_trusted_ca_verify_urls | length <= 32
+      - serviceradar_linux_trusted_ca_verify_status_codes is sequence
+      - serviceradar_linux_trusted_ca_verify_status_codes is not string
+      - serviceradar_linux_trusted_ca_verify_status_codes | length > 0
+      - serviceradar_linux_trusted_ca_verify_status_codes | length <= 32
+      - serviceradar_linux_trusted_ca_verify_timeout | int >= 1
+      - serviceradar_linux_trusted_ca_verify_timeout | int <= 60
+      - serviceradar_linux_trusted_ca_restart_services is sequence
+      - serviceradar_linux_trusted_ca_restart_services is not string
+      - serviceradar_linux_trusted_ca_restart_services | length <= 16
+      - serviceradar_linux_trusted_ca_checkend_seconds | int >= 0
+      - serviceradar_linux_trusted_ca_checkend_seconds | int <= 31536000
+    fail_msg: Linux CA trust inputs are invalid or outside their bounded limits.
+
+- name: Select the platform trust-store contract
+  ansible.builtin.set_fact:
+    serviceradar_linux_trusted_ca_anchor_dir: >-
+      {{ '/usr/local/share/ca-certificates'
+         if ansible_facts.os_family == 'Debian'
+         else '/etc/pki/ca-trust/source/anchors' }}
+    serviceradar_linux_trusted_ca_extension: >-
+      {{ '.crt' if ansible_facts.os_family == 'Debian' else '.pem' }}
+    serviceradar_linux_trusted_ca_refresh_argv: >-
+      {{ ['update-ca-certificates']
+         if ansible_facts.os_family == 'Debian'
+         else ['update-ca-trust', 'extract'] }}
+
+- name: Validate every CA item shape
+  ansible.builtin.include_tasks: validate_shape.yml
+  loop: "{{ serviceradar_linux_trusted_ca_certificates }}"
+  loop_control:
+    loop_var: serviceradar_linux_trusted_ca_item
+    label: "{{ serviceradar_linux_trusted_ca_item.name | default('invalid-item') }}"
+
+- name: Reject duplicate CA anchor names
+  ansible.builtin.assert:
+    that:
+      - >-
+        (serviceradar_linux_trusted_ca_certificates | map(attribute='name') | list | unique | length)
+        == (serviceradar_linux_trusted_ca_certificates | length)
+    fail_msg: CA anchor names must be unique in one transaction.
+
+- name: Validate consumer service names
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^[A-Za-z0-9_.@-]{1,128}$')
+    fail_msg: Consumer service names must be exact systemd unit-safe names.
+  loop: "{{ serviceradar_linux_trusted_ca_restart_services }}"
+
+- name: Reject duplicate consumer service names
+  ansible.builtin.assert:
+    that:
+      - >-
+        (serviceradar_linux_trusted_ca_restart_services | unique | length)
+        == (serviceradar_linux_trusted_ca_restart_services | length)
+    fail_msg: Consumer service names must be unique in one transaction.
+
+- name: Validate endpoint proof URLs
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - (item | ansible.builtin.urlsplit('scheme')) == 'https'
+      - (item | ansible.builtin.urlsplit('hostname') | default('', true)) | length > 0
+      - (item | ansible.builtin.urlsplit('username') | default('', true)) == ''
+      - (item | ansible.builtin.urlsplit('password') | default('', true)) == ''
+      - (item | ansible.builtin.urlsplit('query') | default('', true)) == ''
+      - (item | ansible.builtin.urlsplit('fragment') | default('', true)) == ''
+    fail_msg: Endpoint proofs require canonical HTTPS URLs without credentials, query, or fragment.
+  loop: "{{ serviceradar_linux_trusted_ca_verify_urls }}"
+
+- name: Validate endpoint proof status codes
+  ansible.builtin.assert:
+    that:
+      - item is integer
+      - item | int >= 100
+      - item | int <= 599
+    fail_msg: Endpoint proof status codes must be valid HTTP response codes.
+  loop: "{{ serviceradar_linux_trusted_ca_verify_status_codes }}"
+
+- name: Require the OpenSSL validation tool for present CAs
+  ansible.builtin.command:
+    argv: [openssl, version]
+  changed_when: false
+  check_mode: false
+  when: >-
+    (serviceradar_linux_trusted_ca_certificates | selectattr('state', 'undefined') | list | length > 0)
+    or
+    (serviceradar_linux_trusted_ca_certificates | selectattr('state', 'equalto', 'present') | list | length > 0)
+
+- name: Require the platform trust refresh tool
+  ansible.builtin.command:
+    argv:
+      - "{{ serviceradar_linux_trusted_ca_refresh_argv[0] }}"
+      - --help
+  changed_when: false
+  check_mode: false
+
+- name: Validate every present CA before trust-store mutation
+  ansible.builtin.include_tasks: validate_item.yml
+  loop: "{{ serviceradar_linux_trusted_ca_certificates }}"
+  loop_control:
+    loop_var: serviceradar_linux_trusted_ca_item
+    label: "{{ serviceradar_linux_trusted_ca_item.name }}"
+  when: serviceradar_linux_trusted_ca_item.state | default('present') == 'present'
+
+- name: Ensure the platform trust anchor directory exists
+  ansible.builtin.file:
+    path: "{{ serviceradar_linux_trusted_ca_anchor_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Apply fingerprint-pinned CA items
+  ansible.builtin.include_tasks: apply_item.yml
+  loop: "{{ serviceradar_linux_trusted_ca_certificates }}"
+  loop_control:
+    loop_var: serviceradar_linux_trusted_ca_item
+    label: "{{ serviceradar_linux_trusted_ca_item.name }}"
+
+- name: Apply trust-store and consumer changes before endpoint proof
+  ansible.builtin.meta: flush_handlers
+
+- name: Validate HTTPS endpoints with the refreshed system trust
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    method: GET
+    return_content: false
+    status_code: "{{ serviceradar_linux_trusted_ca_verify_status_codes }}"
+    timeout: "{{ serviceradar_linux_trusted_ca_verify_timeout }}"
+    follow_redirects: none
+    use_netrc: false
+    use_proxy: false
+    validate_certs: true
+  loop: "{{ serviceradar_linux_trusted_ca_verify_urls }}"
+  loop_control:
+    label: "{{ item }}"

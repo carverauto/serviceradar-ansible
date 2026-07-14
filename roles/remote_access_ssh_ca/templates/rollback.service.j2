@@ -1,0 +1,12 @@
+[Unit]
+Description=Rollback uncommitted ServiceRadar SSH CA policy
+After=local-fs.target
+Before=ssh.service sshd.service
+ConditionPathExists={{ sr_ra_state_dir }}/pending.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/serviceradar-ssh-ca-rollback {{ sr_ra_transaction['id'] }}
+
+[Install]
+WantedBy=multi-user.target

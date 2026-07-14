@@ -1,0 +1,67 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - name: sr-ra-ubuntu2204
+    image: >-
+      docker.io/geerlingguy/docker-ubuntu2204-ansible@sha256:114c729fe6540653b432bb8102bc760eb83a9569f95206f077ad74cb7e7361ee
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-ra-ubuntu2404
+    image: >-
+      docker.io/geerlingguy/docker-ubuntu2404-ansible@sha256:c446997f67e9f43bb427180166ce1db7ad4312f7065242456c57c937cb9cdd5b
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-ra-debian12
+    image: >-
+      docker.io/geerlingguy/docker-debian12-ansible@sha256:1b1881bfc5f025980765a90e76ecaebd61f53248eb0f3f23bc027da1b201400e
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-ra-rocky9
+    image: >-
+      docker.io/geerlingguy/docker-rockylinux9-ansible@sha256:12e0bf8e95037b84af695b0c4ae6a552e3100c69793ee02f95870b4e02bd22ff
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  inventory:
+    host_vars:
+      sr-ra-ubuntu2204:
+        expected_distribution: Ubuntu
+        expected_version: "22.04"
+      sr-ra-ubuntu2404:
+        expected_distribution: Ubuntu
+        expected_version: "24.04"
+      sr-ra-debian12:
+        expected_distribution: Debian
+        expected_version: "12"
+      sr-ra-rocky9:
+        expected_distribution: Rocky
+        expected_version: "9"
+verifier:
+  name: ansible
+scenario:
+  test_sequence:
+    - destroy
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

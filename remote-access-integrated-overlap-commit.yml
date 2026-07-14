@@ -1,0 +1,16 @@
+---
+- name: Bind this wrapper to integrated overlap commit
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Require callback credential intent for this exact wrapper
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_PHASE') == 'commit'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_STATE') == 'present'
+          - lookup('ansible.builtin.env', 'SERVICERADAR_CALLBACK_OPERATION') == 'overlap'
+      run_once: true
+      delegate_to: localhost
+
+- name: Load integrated overlap commit
+  ansible.builtin.import_playbook: playbooks/integrated.yml

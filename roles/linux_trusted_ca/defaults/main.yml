@@ -1,0 +1,18 @@
+---
+# Each present item requires name, certificate, and sha256_fingerprint. The
+# fingerprint is the lowercase/uppercase hexadecimal SHA-256 of the DER leaf.
+serviceradar_linux_trusted_ca_certificates: []
+
+# Optional HTTPS URLs tested after the trust store is refreshed and consumers
+# are restarted. Certificate validation is always enabled.
+serviceradar_linux_trusted_ca_verify_urls: []
+serviceradar_linux_trusted_ca_verify_status_codes: [200, 401, 403]
+serviceradar_linux_trusted_ca_verify_timeout: 10
+
+# Go processes may cache the system trust pool. List exact systemd services
+# that must be restarted after a trust-store change, for example:
+#   [serviceradar-agent]
+serviceradar_linux_trusted_ca_restart_services: []
+
+# Reject CAs that expire inside this window.
+serviceradar_linux_trusted_ca_checkend_seconds: 86400

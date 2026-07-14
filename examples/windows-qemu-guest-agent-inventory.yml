@@ -1,0 +1,17 @@
+---
+# Non-secret example. Store the Windows administrator credential in AWX.
+all:
+  children:
+    windows_qemu_guests:
+      hosts:
+        windows-vm-01:
+          ansible_host: 192.0.2.25
+          ansible_connection: winrm
+          ansible_port: 5986
+          ansible_winrm_scheme: https
+          ansible_winrm_transport: ntlm
+          ansible_winrm_server_cert_validation: validate
+          windows_qemu_guest_agent_source: mounted_iso
+          windows_qemu_guest_agent_msi_path: 'D:\guest-agent\qemu-ga-x86_64.msi'
+          windows_qemu_guest_agent_msi_checksum: REPLACE_WITH_64_HEX_SHA256
+          windows_qemu_guest_agent_reboot_policy: if_required

@@ -1,0 +1,68 @@
+---
+# Read-only AWX preflight for discovering the x64 QEMU Guest Agent MSI on
+# attached CD-ROM media. Output is intentionally limited to path, SHA-256, and
+# Authenticode status; no credential or host identity is returned.
+- name: Discover and verify mounted QEMU Guest Agent MSI on Windows
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Discover QEMU Guest Agent MSI files on CD-ROM drives
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param ()
+
+          $artifacts = @(
+              Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=5' |
+                  ForEach-Object {
+                      $path = "$($_.DeviceID)\guest-agent\qemu-ga-x86_64.msi"
+                      if (Test-Path -LiteralPath $path -PathType Leaf) {
+                          $signature = Get-AuthenticodeSignature -LiteralPath $path
+                          [PSCustomObject]@{
+                              path = $path
+                              sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                              authenticode_status = $signature.Status.ToString()
+                          }
+                      }
+                  }
+          )
+          $Ansible.Changed = $false
+          $artifacts
+      register: windows_qemu_guest_agent_preflight
+
+    - name: Report only the mounted artifact trust record
+      ansible.builtin.debug:
+        msg: "{{ windows_qemu_guest_agent_preflight.output | default([]) }}"
+
+    - name: Require one policy-compliant MSI and the expected SHA-256
+      ansible.builtin.assert:
+        that:
+          - >-
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') in
+            ['require_valid', 'allow_unsigned_pinned_iso']
+          - windows_qemu_guest_agent_preflight.output | length == 1
+          - >-
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') != 'require_valid' or
+            windows_qemu_guest_agent_preflight.output[0].authenticode_status ==
+            'Valid'
+          - >-
+            windows_qemu_guest_agent_preflight_signature_policy |
+            default('require_valid') != 'allow_unsigned_pinned_iso' or
+            windows_qemu_guest_agent_preflight.output[0].authenticode_status in
+            ['Valid', 'NotSigned']
+          - >-
+            windows_qemu_guest_agent_preflight_expected_checksum |
+            default('') is
+            match('^[A-Fa-f0-9]{64}$')
+          - >-
+            windows_qemu_guest_agent_preflight.output[0].sha256 ==
+            windows_qemu_guest_agent_preflight_expected_checksum |
+            default('') | lower
+        fail_msg: >-
+          Preflight requires exactly one guest-agent\qemu-ga-x86_64.msi on
+          CD-ROM and the exact expected SHA-256. The default requires a Valid
+          Authenticode signature. allow_unsigned_pinned_iso explicitly permits
+          only Valid or NotSigned media with the pinned digest.

@@ -1,0 +1,30 @@
+---
+- name: Validate Windows QGA absolute MSI path contracts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/windows_qemu_guest_agent/defaults/main.yml
+    - ../roles/windows_qemu_guest_agent/vars/main.yml
+  vars:
+    windows_qemu_guest_agent_contract_mounted_path: >-
+      D:\guest-agent\qemu-ga-x86_64.msi
+  tasks:
+    - name: Require valid default and mounted Windows MSI paths
+      ansible.builtin.assert:
+        that:
+          - >-
+            windows_qemu_guest_agent_download_path is
+            match(_windows_qemu_guest_agent_absolute_msi_pattern)
+          - >-
+            windows_qemu_guest_agent_contract_mounted_path is
+            match(_windows_qemu_guest_agent_absolute_msi_pattern)
+          - >-
+            not ('guest-agent\\qemu-ga-x86_64.msi' is
+                 match(_windows_qemu_guest_agent_absolute_msi_pattern))
+          - >-
+            not ('/tmp/qemu-ga-x86_64.msi' is
+                 match(_windows_qemu_guest_agent_absolute_msi_pattern))
+        fail_msg: >-
+          The Windows QGA path validator must accept absolute drive-rooted MSI
+          paths and reject relative or POSIX paths.

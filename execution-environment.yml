@@ -1,0 +1,16 @@
+---
+version: 3
+
+images:
+  base_image:
+    name: >-
+      quay.io/ansible/awx-ee@sha256:d6fca88c8c26e143b1fc71cc60db3b0ee06c43cc46fd395e902dcec3dbc5af9b
+
+dependencies:
+  galaxy: requirements.yml
+
+additional_build_steps:
+  append_final:
+    - >-
+      RUN ansible-galaxy collection list ansible.windows |
+      grep -Eq '^ansible\.windows[[:space:]]+2\.4\.0$'

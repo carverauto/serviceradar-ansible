@@ -1,0 +1,4 @@
+---
+argument_specs:
+  main:
+    short_description: Resolve exact integrated SSH CA target policy on the AWX EE.

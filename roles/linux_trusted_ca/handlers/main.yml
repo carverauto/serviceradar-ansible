@@ -1,0 +1,13 @@
+---
+- name: Refresh Linux CA trust
+  ansible.builtin.command:
+    argv: "{{ serviceradar_linux_trusted_ca_refresh_argv }}"
+  changed_when: true
+  listen: Refresh Linux CA trust
+
+- name: Restart CA consumers
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ serviceradar_linux_trusted_ca_restart_services }}"
+  listen: Restart CA consumers

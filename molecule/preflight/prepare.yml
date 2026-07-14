@@ -1,0 +1,88 @@
+---
+- name: Prepare real systemd and sshd fixtures
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install OpenSSH server fixture package
+      ansible.builtin.package:
+        name: openssh-server
+        state: present
+
+    - name: Ensure standard sshd drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Detect standard sshd drop-in include
+      ansible.builtin.command:
+        argv: [grep, -E, '^Include /etc/ssh/sshd_config.d/\*\.conf$', /etc/ssh/sshd_config]
+      register: molecule_sshd_include
+      changed_when: false
+      failed_when: false
+
+    - name: Add the distribution-standard include to fixture only
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        line: Include /etc/ssh/sshd_config.d/*.conf
+        insertbefore: BOF
+      when: molecule_sshd_include.rc != 0
+
+    - name: Create an existing non-root fixture account
+      ansible.builtin.user:
+        name: srtest
+        shell: /bin/sh
+        create_home: true
+
+    - name: Create private ephemeral CA directory inside one disposable fixture
+      ansible.builtin.file:
+        path: /run/serviceradar-test-ca
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      run_once: true
+
+    - name: Generate ephemeral test CA inside the disposable fixture
+      ansible.builtin.command:
+        argv:
+          - ssh-keygen
+          - -q
+          - -t
+          - ed25519
+          - -N
+          - ""
+          - -f
+          - /run/serviceradar-test-ca/ca
+        creates: /run/serviceradar-test-ca/ca
+      no_log: true
+      run_once: true
+
+    - name: Fetch only the ephemeral public test CA to the Molecule controller
+      ansible.builtin.fetch:
+        src: /run/serviceradar-test-ca/ca.pub
+        dest: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/test-ca.pub"
+        flat: true
+      run_once: true
+
+    - name: Start the real fixture SSH daemon
+      ansible.builtin.systemd_service:
+        name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+        enabled: true
+        state: started
+
+- name: Confirm only the public ephemeral test CA left the fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Verify ephemeral public test key exists
+      ansible.builtin.stat:
+        path: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/test-ca.pub"
+      register: molecule_test_ca_public
+
+    - name: Require fixture-generated public test key
+      ansible.builtin.assert:
+        that: molecule_test_ca_public.stat.isreg | default(false)

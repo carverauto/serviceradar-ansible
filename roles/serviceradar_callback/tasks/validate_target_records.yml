@@ -1,0 +1,37 @@
+---
+- name: Require CA and account records to be objects
+  ansible.builtin.assert:
+    that:
+      - sr_cb_target.ca_keys | reject('mapping') | list | length == 0
+      - sr_cb_target.accounts | reject('mapping') | list | length == 0
+    fail_msg: Callback CA/account records must be exact objects.
+  no_log: true
+
+- name: Require exact public CA record schema
+  ansible.builtin.assert:
+    that:
+      - sr_cb_ca.keys() | difference(['id', 'public_key', 'fingerprint']) | length == 0
+      - sr_cb_ca.keys() | length == 3
+      - sr_cb_ca.id is string
+      - sr_cb_ca.public_key is string
+      - sr_cb_ca.fingerprint is string
+    fail_msg: Callback public CA record has missing, extra, or mistyped fields.
+  loop: "{{ sr_cb_target.ca_keys }}"
+  loop_control:
+    loop_var: sr_cb_ca
+  no_log: true
+
+- name: Require exact account/principal record schema
+  ansible.builtin.assert:
+    that:
+      - sr_cb_account.keys() | difference(['name', 'principals']) | length == 0
+      - sr_cb_account.keys() | length == 2
+      - sr_cb_account.name is string
+      - sr_cb_account.principals is sequence
+      - sr_cb_account.principals is not string
+      - sr_cb_account.principals | reject('string') | list | length == 0
+    fail_msg: Callback account record has missing, extra, or mistyped fields.
+  loop: "{{ sr_cb_target.accounts }}"
+  loop_control:
+    loop_var: sr_cb_account
+  no_log: true
