@@ -512,29 +512,68 @@ def check_integrated_catalog_only() -> None:
 
 def check_ci_boundary() -> None:
     workflow = (ROOT / ".forgejo/workflows/quality.yml").read_text(encoding="utf-8")
-    molecule = workflow.split("  molecule-systemd-sshd:\n", maxsplit=1)[-1]
+    lint_and_molecule = workflow.split("  lint-and-syntax:\n", maxsplit=1)
+    if len(lint_and_molecule) != 2:
+        raise AssertionError("lint job is missing from the quality workflow")
 
-    required = {
-        "runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]",
+    job_sections = lint_and_molecule[1].split("  molecule-systemd-sshd:\n", maxsplit=1)
+    if len(job_sections) != 2:
+        raise AssertionError("Molecule job is missing from the quality workflow")
+
+    lint, molecule = job_sections
+
+    approved_label = "serviceradar-public-ephemeral-ubuntu-24.04-20260701"
+    approved_runs_on = f"runs-on: [{approved_label}]"
+    boundary_required = {
+        approved_runs_on,
         "persist-credentials: false",
+        'test "${GITHUB_REPOSITORY:-}" = "carverauto/serviceradar-ansible"',
+        'test "${SERVICERADAR_RUNNER_BOUNDARY:-}" = "public-ephemeral-lxc-v1"',
+        'test "${SERVICERADAR_RUNNER_REPOSITORY_ID:-}" = "85"',
+        'test "${SERVICERADAR_RUNNER_REPOSITORY:-}" = "carverauto/serviceradar-ansible"',
+        'test "${SERVICERADAR_RUNNER_VERSION:-}" = "12.8.0"',
+        "SERVICERADAR_RUNNER_GUEST_ID",
         "test ! -S /run/forgejo-docker/docker.sock",
         "test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token",
-        "DOCKER_HOST: unix:///var/run/docker.sock",
+        "PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY",
+        "FORGEJO_RUNNER_REGISTRATION_TOKEN",
     }
-    missing = sorted(value for value in required if value not in molecule)
+
+    for job_name, job in (("lint", lint), ("Molecule", molecule)):
+        missing = sorted(value for value in boundary_required if value not in job)
+        if missing:
+            raise AssertionError(
+                f"isolated {job_name} runner contract missing: {missing}"
+            )
+
+    runs_on_lines = re.findall(r"^\s+runs-on:\s*.+$", workflow, flags=re.MULTILINE)
+    if runs_on_lines != [f"    {approved_runs_on}", f"    {approved_runs_on}"]:
+        raise AssertionError(
+            f"quality jobs must use only the approved runner: {runs_on_lines}"
+        )
+
+    if "permissions:\n  contents: read" not in workflow:
+        raise AssertionError("quality workflow must retain read-only repository permissions")
+    if "defaults:\n  run:\n    shell: bash" not in workflow:
+        raise AssertionError("quality workflow must execute boundary checks with Bash")
+
+    molecule_required = {
+        "DOCKER_HOST: unix:///var/run/docker.sock",
+        'test "${#platform_images[@]}" -eq 4',
+    }
+    missing = sorted(value for value in molecule_required if value not in molecule)
     if missing:
         raise AssertionError(f"isolated Molecule runner contract missing: {missing}")
 
     forbidden = {
         "runs-on: [ubuntu24]",
+        "runs-on: [ubuntu-latest]",
         "serviceradar-signing",
         "pull_request_target",
-        "--privileged",
-        "volumes:",
     }
-    present = sorted(value for value in forbidden if value in molecule)
+    present = sorted(value for value in forbidden if value in workflow)
     if present:
-        raise AssertionError(f"unsafe Molecule runner contract present: {present}")
+        raise AssertionError(f"unsafe quality workflow runner contract present: {present}")
 
 
 def main() -> None:

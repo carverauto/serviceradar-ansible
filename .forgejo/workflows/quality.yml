@@ -6,16 +6,58 @@ name: remote-access-content-quality
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lint-and-syntax:
-    # The organization-wide ubuntu24 pool uses disposable DinD-backed workers;
-    # this workflow does not request signing labels or repository credentials.
-    runs-on: [ubuntu24]
+    # This exact label is registered only for repository 85 and runs one job in
+    # a fresh disposable LXC guest. Never replace it with a generic pool label.
+    runs-on: [serviceradar-public-ephemeral-ubuntu-24.04-20260701]
+    timeout-minutes: 30
     steps:
+      - name: Assert repository-scoped public runner boundary
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY:-}" = "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_BOUNDARY:-}" = "public-ephemeral-lxc-v1"
+          test "${SERVICERADAR_RUNNER_REPOSITORY_ID:-}" = "85"
+          test "${SERVICERADAR_RUNNER_REPOSITORY:-}" = "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_LABEL:-}" = \
+            "serviceradar-public-ephemeral-ubuntu-24.04-20260701"
+          test "${SERVICERADAR_RUNNER_VERSION:-}" = "12.8.0"
+          [[ "${SERVICERADAR_RUNNER_GUEST_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          test ! -S /run/forgejo-docker/docker.sock
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          test ! -e "${HOME}/.kube/config"
+          for name in \
+            KUBECONFIG KUBERNETES_SERVICE_HOST VAULT_TOKEN OPENBAO_TOKEN \
+            COSIGN_KEY_REF PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY \
+            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_TOKEN \
+            FORGEJO_RUNNER_TOKEN FORGEJO_RUNNER_REGISTRATION_TOKEN; do
+            if [[ -n "${!name:-}" ]]; then
+              echo "forbidden privileged environment variable is present: ${name}" >&2
+              exit 1
+            fi
+          done
+          printf 'runner_boundary=%s\n' "${SERVICERADAR_RUNNER_BOUNDARY}"
+          printf 'runner_repository_id=%s\n' "${SERVICERADAR_RUNNER_REPOSITORY_ID}"
+          printf 'runner_label=%s\n' "${SERVICERADAR_RUNNER_LABEL}"
+          printf 'runner_version=%s\n' "${SERVICERADAR_RUNNER_VERSION}"
+          printf 'runner_guest_id=%s\n' "${SERVICERADAR_RUNNER_GUEST_ID}"
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Record immutable source provenance
+        run: |
+          set -euo pipefail
+          printf 'source_commit=%s\n' "${GITHUB_SHA}"
+          sha256sum requirements-ci.lock
       - name: Install exact reviewed lint dependencies
         run: |
           set -euo pipefail
@@ -46,10 +88,52 @@ jobs:
       matrix:
         scenario: [preflight]
     steps:
+      - name: Assert repository-scoped public runner boundary
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY:-}" = "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_BOUNDARY:-}" = "public-ephemeral-lxc-v1"
+          test "${SERVICERADAR_RUNNER_REPOSITORY_ID:-}" = "85"
+          test "${SERVICERADAR_RUNNER_REPOSITORY:-}" = "carverauto/serviceradar-ansible"
+          test "${SERVICERADAR_RUNNER_LABEL:-}" = \
+            "serviceradar-public-ephemeral-ubuntu-24.04-20260701"
+          test "${SERVICERADAR_RUNNER_VERSION:-}" = "12.8.0"
+          [[ "${SERVICERADAR_RUNNER_GUEST_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          test ! -S /run/forgejo-docker/docker.sock
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          test ! -e "${HOME}/.kube/config"
+          for name in \
+            KUBECONFIG KUBERNETES_SERVICE_HOST VAULT_TOKEN OPENBAO_TOKEN \
+            COSIGN_KEY_REF PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY \
+            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_TOKEN \
+            FORGEJO_RUNNER_TOKEN FORGEJO_RUNNER_REGISTRATION_TOKEN; do
+            if [[ -n "${!name:-}" ]]; then
+              echo "forbidden privileged environment variable is present: ${name}" >&2
+              exit 1
+            fi
+          done
+          printf 'runner_boundary=%s\n' "${SERVICERADAR_RUNNER_BOUNDARY}"
+          printf 'runner_repository_id=%s\n' "${SERVICERADAR_RUNNER_REPOSITORY_ID}"
+          printf 'runner_label=%s\n' "${SERVICERADAR_RUNNER_LABEL}"
+          printf 'runner_version=%s\n' "${SERVICERADAR_RUNNER_VERSION}"
+          printf 'runner_guest_id=%s\n' "${SERVICERADAR_RUNNER_GUEST_ID}"
       - name: Check out reviewed source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Record immutable source and platform provenance
+        run: |
+          set -euo pipefail
+          printf 'source_commit=%s\n' "${GITHUB_SHA}"
+          sha256sum requirements-ci.lock
+          mapfile -t platform_images < <(
+            awk '/^[[:space:]]+docker\.io\/.*@sha256:[0-9a-f]+$/ {
+              sub(/^[[:space:]]+/, "")
+              print
+            }' molecule/preflight/molecule.yml
+          )
+          test "${#platform_images[@]}" -eq 4
+          printf 'platform_image=%s\n' "${platform_images[@]}"
       - name: Prepare isolated inner Docker
         run: |
           set -euo pipefail
