@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Dependency-free repository contract checks used before Ansible tooling."""
+"""Repository checks using the standard library and exact-pinned PyYAML."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import re
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 IGNORED_DIRS = {".git", ".venv", ".ansible", ".cache", ".collections", ".molecule", "__pycache__"}
@@ -66,11 +68,45 @@ PROXMOX_INVENTORY_REQUIRED_FILES = {
     "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/injectors.json",
 }
 
+PUBLIC_RUNNER_DIAGNOSTIC_REQUIRED_FILES = {
+    ".forgejo/workflows/public-runner-diagnostic.yml",
+    "docs/public-runner-isolation-diagnostic.md",
+    "scripts/public_runner_diagnostic.sh",
+    "tests/test_workflow_yaml_contract.py",
+}
+
 
 def repository_files(pattern: str = "*"):
     for path in ROOT.rglob(pattern):
         if path.is_file() and not any(part in IGNORED_DIRS for part in path.parts):
             yield path
+
+
+def load_unique_yaml(path: Path):
+    """Load trusted repository YAML while rejecting duplicate mapping keys."""
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def construct_unique_mapping(loader, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in mapping
+            except TypeError as exc:
+                raise AssertionError(f"unhashable YAML key in {path}") from exc
+            if duplicate:
+                raise AssertionError(f"duplicate YAML key in {path}: {key!r}")
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        construct_unique_mapping,
+    )
+    with path.open(encoding="utf-8") as source:
+        return yaml.load(source, Loader=UniqueKeyLoader)
 
 
 def check_json() -> None:
@@ -536,6 +572,8 @@ def check_ci_boundary() -> None:
         "test ! -S /run/forgejo-docker/docker.sock",
         "test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token",
         "PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY",
+        "FORGEJO_API_TOKEN",
+        "FORGEJO_RUNNER_TOKEN",
         "FORGEJO_RUNNER_REGISTRATION_TOKEN",
     }
 
@@ -545,6 +583,21 @@ def check_ci_boundary() -> None:
             raise AssertionError(
                 f"isolated {job_name} runner contract missing: {missing}"
             )
+        denylist = job.split("for name in \\", maxsplit=1)[1].split(
+            "; do", maxsplit=1
+        )[0]
+        if "FORGEJO_TOKEN" in denylist:
+            raise AssertionError(
+                f"isolated {job_name} runner must allow Forgejo's automatic job token"
+            )
+        for required in (
+            'test -n "${FORGEJO_TOKEN:-}"',
+            'test "${FORGEJO_TOKEN}" = "${GITHUB_TOKEN:-}"',
+        ):
+            if required not in job:
+                raise AssertionError(
+                    f"isolated {job_name} runner job-token assertion missing: {required}"
+                )
 
     runs_on_lines = re.findall(r"^\s+runs-on:\s*.+$", workflow, flags=re.MULTILINE)
     if runs_on_lines != [f"    {approved_runs_on}", f"    {approved_runs_on}"]:
@@ -553,7 +606,9 @@ def check_ci_boundary() -> None:
         )
 
     if "permissions:\n  contents: read" not in workflow:
-        raise AssertionError("quality workflow must retain read-only repository permissions")
+        raise AssertionError(
+            "quality workflow must retain its contents: read intent declaration"
+        )
     if "defaults:\n  run:\n    shell: bash" not in workflow:
         raise AssertionError("quality workflow must execute boundary checks with Bash")
 
@@ -575,6 +630,384 @@ def check_ci_boundary() -> None:
     if present:
         raise AssertionError(f"unsafe quality workflow runner contract present: {present}")
 
+    shell_gate_required = {
+        "shellcheck=0.9.0-1",
+        'test "$(shellcheck --version | awk \'/^version:/ {print $2}\')" = "0.9.0"',
+    }
+    missing = sorted(value for value in shell_gate_required if value not in lint)
+    if missing:
+        raise AssertionError(f"exact ShellCheck quality gate missing: {missing}")
+
+    check_script = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+    for required in (
+        "command -v shellcheck",
+        "scripts/public_runner_diagnostic.sh",
+        "shellcheck \\",
+    ):
+        if required not in check_script:
+            raise AssertionError(f"repository ShellCheck gate missing: {required}")
+
+
+def check_public_runner_diagnostic() -> None:
+    missing_files = sorted(
+        name
+        for name in PUBLIC_RUNNER_DIAGNOSTIC_REQUIRED_FILES
+        if not (ROOT / name).is_file()
+    )
+    if missing_files:
+        raise AssertionError(
+            f"missing public runner diagnostic content: {missing_files}"
+        )
+
+    requirements = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
+    lock = (ROOT / "requirements-ci.lock").read_text(encoding="utf-8")
+    if "pyyaml==6.0.3" not in requirements or "pyyaml==6.0.3" not in lock:
+        raise AssertionError(
+            "strict workflow YAML parser dependency is not exactly pinned"
+        )
+
+    workflow_path = ROOT / ".forgejo/workflows/public-runner-diagnostic.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+    parsed = load_unique_yaml(workflow_path)
+    if not isinstance(parsed, dict):
+        raise AssertionError("public runner diagnostic workflow must be a mapping")
+    if set(parsed) != {
+        "name",
+        "on",
+        "permissions",
+        "concurrency",
+        "defaults",
+        "jobs",
+    }:
+        raise AssertionError(
+            f"public runner diagnostic has unexpected top-level keys: {sorted(parsed)}"
+        )
+    if parsed.get("name") != "controlled-public-runner-isolation-diagnostic":
+        raise AssertionError("public runner diagnostic name differs")
+    triggers = parsed.get("on")
+    if not isinstance(triggers, dict) or set(triggers) != {"workflow_dispatch"}:
+        raise AssertionError(
+            "public runner diagnostic must have only workflow_dispatch"
+        )
+    dispatch = triggers["workflow_dispatch"]
+    if not isinstance(dispatch, dict) or set(dispatch) != {"inputs"}:
+        raise AssertionError("public runner workflow_dispatch must contain only inputs")
+    inputs = dispatch["inputs"]
+    if not isinstance(inputs, dict) or set(inputs) != {
+        "expected_commit",
+        "scenario",
+        "previous_guest_id",
+    }:
+        raise AssertionError(
+            "public runner diagnostic inputs differ from the reviewed set"
+        )
+    if (
+        inputs["expected_commit"].get("required") is not True
+        or inputs["expected_commit"].get("type") != "string"
+    ):
+        raise AssertionError("expected_commit must be a required string input")
+    if "default" in inputs["expected_commit"]:
+        raise AssertionError("expected_commit must never have a moving default")
+    if (
+        inputs["scenario"].get("required") is not True
+        or inputs["scenario"].get("default") != "success"
+    ):
+        raise AssertionError("diagnostic scenario input contract differs")
+    if inputs["scenario"].get("type") != "string":
+        raise AssertionError("diagnostic scenario must be a string input")
+    if (
+        inputs["previous_guest_id"].get("required") is not False
+        or inputs["previous_guest_id"].get("default") != ""
+        or inputs["previous_guest_id"].get("type") != "string"
+    ):
+        raise AssertionError("previous_guest_id input contract differs")
+    if parsed.get("permissions") != {"contents": "read"}:
+        raise AssertionError(
+            "public runner diagnostic permissions intent must be contents: read"
+        )
+    if parsed.get("concurrency") != {
+        "group": "controlled-public-runner-isolation-diagnostic",
+        "cancel-in-progress": False,
+    }:
+        raise AssertionError("public runner diagnostic concurrency contract differs")
+    if parsed.get("defaults") != {"run": {"shell": "bash"}}:
+        raise AssertionError("public runner diagnostic shell defaults differ")
+
+    approved_label = "serviceradar-public-ephemeral-ubuntu-24.04-20260701"
+    jobs = parsed.get("jobs")
+    if not isinstance(jobs, dict) or set(jobs) != {"diagnostic", "verify-next-guest"}:
+        raise AssertionError("public runner diagnostic must contain exactly two jobs")
+    checkout = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+    expected_job_keys = {
+        "diagnostic": {"runs-on", "timeout-minutes", "outputs", "steps"},
+        "verify-next-guest": {
+            "needs",
+            "if",
+            "runs-on",
+            "timeout-minutes",
+            "steps",
+        },
+    }
+    for job_name, job in jobs.items():
+        if set(job) != expected_job_keys[job_name]:
+            raise AssertionError(f"{job_name} job keys differ from the reviewed set")
+        if job.get("runs-on") != [approved_label]:
+            raise AssertionError(
+                f"{job_name} must use only the exact public runner label"
+            )
+        if job.get("timeout-minutes") != 8:
+            raise AssertionError(f"{job_name} must retain the reviewed timeout")
+        for forbidden_key in ("container", "services", "environment", "permissions"):
+            if forbidden_key in job:
+                raise AssertionError(
+                    f"{job_name} contains forbidden job key: {forbidden_key}"
+                )
+        steps = job.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise AssertionError(f"{job_name} steps are missing")
+        if len(steps) != 3 or not all(isinstance(step, dict) for step in steps):
+            raise AssertionError(f"{job_name} must contain exactly three mapping steps")
+        expected_step_keys = (
+            ({"name", "id", "env", "run"}, {"name", "uses", "with"}, {"name", "env", "run"})
+            if job_name == "diagnostic"
+            else ({"name", "env", "run"}, {"name", "uses", "with"}, {"name", "env", "run"})
+        )
+        if tuple(set(step) for step in steps) != expected_step_keys:
+            raise AssertionError(f"{job_name} step keys or ordering differ")
+        pre_checkout = steps[0].get("run", "")
+        for required in (
+            'name.startswith("GIT_")',
+            '"ALL_PROXY"',
+            '"FORGEJO_API_TOKEN"',
+            '"FORGEJO_RUNNER_REGISTRATION_TOKEN"',
+            '"FORGEJO_RUNNER_TOKEN"',
+            '("credential.", "filter.", "http.", "include.", "url.")',
+            '"core.fsmonitor"',
+            '"init.templatedir"',
+            'key.casefold().startswith("remote.")',
+            "forbidden pre-checkout environment category is present",
+            "Git configuration contains a pre-checkout credential or execution hook",
+            "serviceradar-public-runner-diagnostic-workspace-sentinel",
+        ):
+            if required not in pre_checkout:
+                raise AssertionError(
+                    f"{job_name} pre-checkout isolation gate is missing: {required}"
+                )
+        credential_denylist = pre_checkout.split(
+            "forbidden_environment = {", maxsplit=1
+        )[1].split("\n}", maxsplit=1)[0]
+        if '"FORGEJO_TOKEN"' in credential_denylist:
+            raise AssertionError(
+                f"{job_name} pre-checkout gate must allow Forgejo's automatic job token"
+            )
+        if (
+            'os.environ.get("FORGEJO_TOKEN", "")' not in pre_checkout
+            or 'os.environ.get("GITHUB_TOKEN", "")' not in pre_checkout
+            or "automatic Forgejo job token aliases differ or are empty"
+            not in pre_checkout
+        ):
+            raise AssertionError(
+                f"{job_name} pre-checkout job-token alias assertion is missing"
+            )
+        if steps[1].get("uses") != checkout:
+            raise AssertionError(f"{job_name} checkout must follow its isolation gate")
+        checkout_steps = [step for step in steps if step.get("uses") == checkout]
+        if len(checkout_steps) != 1 or checkout_steps[0].get("with") != {
+            "persist-credentials": False
+        }:
+            raise AssertionError(
+                f"{job_name} checkout is not exact and credential-free"
+            )
+        unexpected_actions = [
+            step.get("uses")
+            for step in steps
+            if "uses" in step and step.get("uses") != checkout
+        ]
+        if unexpected_actions:
+            raise AssertionError(f"{job_name} contains unexpected actions")
+    if jobs["diagnostic"].get("outputs") != {
+        "guest_id": "${{ steps.identity.outputs.guest_id }}"
+    }:
+        raise AssertionError("diagnostic job output contract differs")
+    if jobs["verify-next-guest"].get("needs") != ["diagnostic"]:
+        raise AssertionError("replacement guest job dependency differs")
+    if jobs["verify-next-guest"].get("if") != (
+        "${{ always() && github.event.inputs.scenario != 'verify-clean' && "
+        "github.event.inputs.scenario != 'hold-for-cancel' }}"
+    ):
+        raise AssertionError("replacement guest terminal-state condition differs")
+
+    workflow_required = {
+        '"on":\n  workflow_dispatch:',
+        "permissions:\n  contents: read",
+        "cancel-in-progress: false",
+        f"runs-on: [{approved_label}]",
+        "timeout-minutes: 8",
+        "persist-credentials: false",
+        "scripts/public_runner_diagnostic.sh run",
+        "scripts/public_runner_diagnostic.sh verify-clean",
+        "needs: [diagnostic]",
+        "always()",
+        "needs.diagnostic.outputs.guest_id",
+        "github.event.inputs.expected_commit",
+        "github.event.inputs.previous_guest_id",
+        'test "${GITHUB_SHA:-}" = "${EXPECTED_COMMIT}"',
+        'test "${GITHUB_SERVER_URL:-}" = "https://code.carverauto.dev"',
+        'name.startswith("GIT_")',
+        "forbidden pre-checkout environment category is present",
+        "Git configuration contains a pre-checkout credential or execution hook",
+        "serviceradar-public-runner-diagnostic-workspace-sentinel",
+        "test ! -S /run/forgejo-docker/docker.sock",
+        "test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token",
+        "test ! -e /etc/forgejo-public-runner/api-token",
+    }
+    missing = sorted(value for value in workflow_required if value not in workflow)
+    if missing:
+        raise AssertionError(
+            f"public runner diagnostic workflow contract missing: {missing}"
+        )
+
+    scenarios = {
+        "success",
+        "forced-failure",
+        "timeout",
+        "hold-for-cancel",
+        "hold-for-runner-crash",
+        "hold-for-host-restart",
+        "verify-clean",
+    }
+    missing = sorted(value for value in scenarios if value not in workflow)
+    if missing:
+        raise AssertionError(f"public runner lifecycle scenarios missing: {missing}")
+
+    if workflow.count(f"runs-on: [{approved_label}]") != 2:
+        raise AssertionError(
+            "both diagnostic jobs must use only the public runner label"
+        )
+    if workflow.count("persist-credentials: false") != 2:
+        raise AssertionError(
+            "both diagnostic checkouts must disable credential persistence"
+        )
+    for forbidden in (
+        "${{ secrets.",
+        "actions/upload-artifact",
+        "serviceradar-signing",
+        "runs-on: [ubuntu24]",
+        "runs-on: [ubuntu-latest]",
+    ):
+        if forbidden in workflow:
+            raise AssertionError(
+                f"unsafe public runner diagnostic workflow content: {forbidden}"
+            )
+
+    diagnostic = (ROOT / "scripts/public_runner_diagnostic.sh").read_text(
+        encoding="utf-8"
+    )
+    diagnostic_required = {
+        "0 && $2 == 1000000 && $3 == 65536",
+        "FORGEJO_RUNNER_REGISTRATION_TOKEN",
+        "/etc/forgejo-public-runner/api-token",
+        "/run/forgejo-docker/docker.sock",
+        "/run/containerd/containerd.sock",
+        "/var/run/secrets/kubernetes.io/serviceaccount/token",
+        "Docker config exposes reusable authentication",
+        "docker volume inspect",
+        "docker image inspect",
+        "previous guest evidence is malformed",
+        "previous guest evidence is required and malformed",
+        "the same disposable guest identity accepted a second job",
+        "PID 1 ${map_kind} map is not the exact singleton reviewed mapping",
+        "https://code.carverauto.dev",
+        "forbidden Git or askpass environment category is present",
+        "ALL_PROXY",
+        '("credential.", "filter.", "http.", "include.", "url.")',
+        '"core.fsmonitor"',
+        '"init.templatedir"',
+        'key.casefold().startswith("remote.")',
+        "Git configuration contains a credential, rewrite, proxy, or execution hook",
+        "cloud or Kubernetes credential/cache state is present under HOME",
+        "private key material is present under HOME",
+        "serviceradar-public-runner-diagnostic-workspace-sentinel",
+        'printf \'%s\\n\' "${evidence}" >"${GITHUB_WORKSPACE}/${workspace_sentinel}"',
+        "Docker config exposes reusable authentication",
+        '("kubernetes-api-service", "10.43.0.1", 443)',
+        '("openbao-active", "10.43.201.1", 8200)',
+        '("proxmox-management", "192.168.2.10", 8006)',
+        '("runner-host-management", "10.213.1.6", 22)',
+        "time.cloudflare.com",
+        "https://registry-1.docker.io/v2/",
+        "https://snapshot.ubuntu.com/ubuntu/20260714T000000Z/dists/noble/InRelease",
+        "docker pull",
+        "--privileged --cgroupns=host",
+        "sentinel_written_for_guest",
+        "exit 42",
+        "operator_hook_ready=true",
+        "expected=host-firewall-drop",
+    }
+    missing = sorted(value for value in diagnostic_required if value not in diagnostic)
+    if missing:
+        raise AssertionError(f"public runner diagnostic assertions missing: {missing}")
+    ambient_function = diagnostic.split(
+        "assert_no_ambient_credentials() {", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    credential_denylist = ambient_function.split(
+        "local -a forbidden_environment=(", maxsplit=1
+    )[1].split("\n  )", maxsplit=1)[0]
+    for required in (
+        "FORGEJO_API_TOKEN",
+        "FORGEJO_RUNNER_REGISTRATION_TOKEN",
+        "FORGEJO_RUNNER_TOKEN",
+    ):
+        if required not in credential_denylist:
+            raise AssertionError(
+                f"public runner diagnostic must reject persistent credential: {required}"
+            )
+    if "FORGEJO_TOKEN" in credential_denylist:
+        raise AssertionError(
+            "public runner diagnostic must allow Forgejo's automatic job token"
+        )
+    for required in (
+        "automatic Forgejo job token is absent",
+        "automatic Forgejo job token aliases differ",
+    ):
+        if required not in ambient_function:
+            raise AssertionError(
+                f"public runner diagnostic job-token assertion missing: {required}"
+            )
+    for forbidden in ("set -x", "printenv", "curl -k", "--insecure"):
+        if forbidden in diagnostic:
+            raise AssertionError(
+                f"unsafe public runner diagnostic behavior: {forbidden}"
+            )
+
+    guide = (ROOT / "docs/public-runner-isolation-diagnostic.md").read_text(
+        encoding="utf-8"
+    )
+    guide_required = {
+        "ssh -J root@192.168.2.10 serviceradar-operator@10.213.1.6",
+        "pkill -KILL -x forgejo-runner",
+        'qm config 167 | grep -Fxq "name: forgejo-public-runner-01" && qm reset 167',
+        "verify-isolation.sh --api",
+        "QUARANTINED",
+        "verify-clean",
+        "always()",
+        "VM-host forbidden-destination counter",
+        "Never display the credential",
+        "runner identity verified",
+        "The workspace tree is searched before checkout",
+        "write-capable",
+        "not an enforcement boundary",
+        "previous_guest_id",
+        "expected_commit",
+        "cannot be used to claim an increment in a PVE counter",
+        "never compare a post-boot value with the pre-reset value",
+        "cat /proc/sys/kernel/random/boot_id",
+        "verify-pve-network.sh --active",
+    }
+    missing = sorted(value for value in guide_required if value not in guide)
+    if missing:
+        raise AssertionError(f"public runner diagnostic runbook missing: {missing}")
+
 
 def main() -> None:
     check_json()
@@ -586,6 +1019,7 @@ def main() -> None:
     check_proxmox_inventory()
     check_integrated_catalog_only()
     check_ci_boundary()
+    check_public_runner_diagnostic()
     print("repository contract checks passed")
 
 

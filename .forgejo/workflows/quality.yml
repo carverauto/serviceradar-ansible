@@ -37,13 +37,15 @@ jobs:
           for name in \
             KUBECONFIG KUBERNETES_SERVICE_HOST VAULT_TOKEN OPENBAO_TOKEN \
             COSIGN_KEY_REF PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY \
-            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_TOKEN \
+            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_API_TOKEN \
             FORGEJO_RUNNER_TOKEN FORGEJO_RUNNER_REGISTRATION_TOKEN; do
             if [[ -n "${!name:-}" ]]; then
               echo "forbidden privileged environment variable is present: ${name}" >&2
               exit 1
             fi
           done
+          test -n "${FORGEJO_TOKEN:-}"
+          test "${FORGEJO_TOKEN}" = "${GITHUB_TOKEN:-}"
           printf 'runner_boundary=%s\n' "${SERVICERADAR_RUNNER_BOUNDARY}"
           printf 'runner_repository_id=%s\n' "${SERVICERADAR_RUNNER_REPOSITORY_ID}"
           printf 'runner_label=%s\n' "${SERVICERADAR_RUNNER_LABEL}"
@@ -70,6 +72,13 @@ jobs:
           set -euo pipefail
           .venv/bin/ansible-galaxy collection install \
             --collections-path .collections --requirements-file requirements.yml
+      - name: Install exact ShellCheck gate from the pinned guest snapshot
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            shellcheck=0.9.0-1
+          test "$(shellcheck --version | awk '/^version:/ {print $2}')" = "0.9.0"
       - name: Run repository, YAML, Ansible lint, and every wrapper syntax gate
         run: scripts/check.sh
       - name: Build collection artifact and record immutable content provenance
@@ -105,13 +114,15 @@ jobs:
           for name in \
             KUBECONFIG KUBERNETES_SERVICE_HOST VAULT_TOKEN OPENBAO_TOKEN \
             COSIGN_KEY_REF PLUGIN_UPLOAD_SIGNING_PRIVATE_KEY \
-            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_TOKEN \
+            HARBOR_ROBOT_SECRET OCI_TOKEN FORGEJO_API_TOKEN \
             FORGEJO_RUNNER_TOKEN FORGEJO_RUNNER_REGISTRATION_TOKEN; do
             if [[ -n "${!name:-}" ]]; then
               echo "forbidden privileged environment variable is present: ${name}" >&2
               exit 1
             fi
           done
+          test -n "${FORGEJO_TOKEN:-}"
+          test "${FORGEJO_TOKEN}" = "${GITHUB_TOKEN:-}"
           printf 'runner_boundary=%s\n' "${SERVICERADAR_RUNNER_BOUNDARY}"
           printf 'runner_repository_id=%s\n' "${SERVICERADAR_RUNNER_REPOSITORY_ID}"
           printf 'runner_label=%s\n' "${SERVICERADAR_RUNNER_LABEL}"

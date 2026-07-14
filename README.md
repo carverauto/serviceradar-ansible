@@ -9,6 +9,11 @@ contains five independent content families:
 - CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
+Repository CI runs on a repository-scoped, one-job public runner. Maintainers
+must complete the manual
+[`public runner isolation diagnostic`](docs/public-runner-isolation-diagnostic.md)
+before enabling normal public pull-request jobs on a new or rebuilt runner.
+
 ## SSH remote-access enrollment
 
 The `serviceradar.remote_access` collection-compatible layout installs only

@@ -25,6 +25,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   public CAs, with per-host batch pre-validation, DER fingerprint pinning,
   active CA/expiry validation, check-mode support, bounded consumer restarts,
   removal, and credential-free verified HTTPS endpoint proofs.
+- A controlled public-runner isolation workflow covering ambient credential and
+  host-socket absence, private-network denial, anonymous public build egress,
+  inner Docker, cross-job state removal, and abnormal lifecycle cleanup.
 
 ### Changed
 
