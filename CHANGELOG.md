@@ -28,6 +28,11 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A controlled public-runner isolation workflow covering ambient credential and
   host-socket absence, private-network denial, anonymous public build egress,
   inner Docker, cross-job state removal, and abnormal lifecycle cleanup.
+- A fleet SSH-CA enrollment role and wrappers replicating the verified pve02
+  layout (locked privilege-free account, user-CA trust, dusk01-policy
+  principals, proof-gated sshd reload) plus a controller-local known_hosts
+  fragment collector for serviceradar#4376. Secrets travel only via
+  ansible-vault, environment, or per-run extra vars.
 
 ### Changed
 

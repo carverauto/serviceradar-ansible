@@ -1,0 +1,10 @@
+---
+- name: Validate the fleet enrollment inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Enroll the fleet host with the pve02 reference layout
+  ansible.builtin.include_tasks: enroll.yml
+
+- name: Verify enrollment before the sshd reload runs
+  ansible.builtin.include_tasks: verify.yml
+  when: not ansible_check_mode

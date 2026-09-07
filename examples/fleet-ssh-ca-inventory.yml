@@ -1,0 +1,21 @@
+---
+# Non-secret example for install-fleet-ssh-ca.yml. Addresses use
+# TEST-NET-1 documentation space: replace them with your real fleet
+# inventory at runtime and never commit real hostnames or addresses.
+all:
+  hosts:
+    fleet-host-01:
+      ansible_host: 192.0.2.11
+    fleet-host-02:
+      ansible_host: 192.0.2.12
+  vars:
+    ansible_user: root
+    # Secrets below are placeholders only. Supply real values per run from an
+    # ansible-vault file (-e @site-vault.yml) or environment:
+    #   FLEET_SSH_CA_PUBLIC_KEY='ssh-ed25519 AAAA... fleet-user-ca'
+    #   FLEET_SSH_CA_FINGERPRINT='SHA256:replace-with-pinned-fingerprint'
+    #   FLEET_SSH_PRINCIPALS='srp_v1_replace_with_dusk01_policy_principal'
+    fleet_ssh_ca_public_key: "ssh-ed25519 AAAA_replace_with_real_public_user_ca_key fleet-user-ca"
+    fleet_ssh_ca_fingerprint: "SHA256:replace_with_pinned_fingerprint"
+    fleet_ssh_principals:
+      - srp_v1_replace_with_dusk01_policy_principal

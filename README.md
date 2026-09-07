@@ -123,6 +123,23 @@ for them, and launch the template from ServiceRadar rather than directly in AWX,
 against the exact canonical device limit. See the
 [role interface](roles/linux_trusted_ca/README.md).
 
+## Fleet SSH-CA enrollment (serviceradar#4376)
+
+`install-fleet-ssh-ca.yml` replicates the verified pve02 fix to the rest of
+the fleet: a locked, privilege-free POSIX user plus OpenSSH user-CA trust
+with dusk01-policy principals on Debian 12 hosts. `sshd -t` and
+account-aware `sshd -T -C` proofs gate an `ssh` reload (never a restart).
+`install-fleet-ssh-known-hosts.yml` collects fleet host keys into a fragment
+for the webconsole `knownhosts` verifier. Secrets and real inventory travel
+only via ansible-vault, environment, or per-run extra vars; the public tree
+carries placeholders. See the
+[fleet enrollment guide](docs/fleet-ssh-ca-enrollment.md), the
+[role interface](roles/fleet_ssh_enroll/README.md), and the non-secret
+[inventory example](examples/fleet-ssh-ca-inventory.yml). This path is
+separate from the transactional `remote_access_ssh_ca` collection (which
+fails closed on hypervisors), the host-agent installer, and the demo
+Settings page.
+
 ## Proxmox dynamic inventory
 
 `inventory/proxmox.proxmox.yml` discovers running guests with TLS verification
@@ -150,6 +167,8 @@ the AWX project sync lists them.
 | `install-agent-redhat.yml` | Installs `serviceradar-agent` on RHEL/Rocky/Alma/Fedora hosts (`dnf`/`dnf5`/`yum` via `ansible.builtin.package`, `.rpm`). |
 | `install-qemu-guest-agent-windows.yml` | Installs and verifies QEMU Guest Agent on a pre-bootstrapped Windows QEMU/Proxmox guest. |
 | `install-linux-trusted-ca.yml` | Installs or removes fingerprint-pinned public CA trust and optionally verifies private HTTPS endpoints. |
+| `install-fleet-ssh-ca.yml` | Enrolls Debian 12 fleet hosts with the verified pve02 SSH user-CA layout (locked account, CA trust, dusk01-policy principals). Secrets via vault/env/extra-vars only. |
+| `install-fleet-ssh-known-hosts.yml` | Controller-local host-key collection into a `known_hosts` fragment for the webconsole verifier. Targets per run, never committed. |
 | `qemu-guest-agent-windows-preflight.yml` | Read-only discovery of mounted QGA MSI path, SHA-256, and Authenticode status. |
 
 Both installers:

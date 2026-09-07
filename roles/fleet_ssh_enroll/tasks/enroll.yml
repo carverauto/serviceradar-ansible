@@ -1,0 +1,66 @@
+---
+- name: Create the privilege-free enrollment account
+  ansible.builtin.user:
+    name: "{{ fleet_ssh_user }}"
+    shell: "{{ fleet_ssh_user_shell }}"
+    create_home: true
+    password: "!"
+    update_password: always
+
+- name: Read the enrollment account group membership
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/id
+      - -nG
+      - "{{ fleet_ssh_user }}"
+  register: fleet_ssh_account_groups
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Keep the enrollment account out of every extra group
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/usermod
+      - -G
+      - ""
+      - "{{ fleet_ssh_user }}"
+  when:
+    - not ansible_check_mode
+    - fleet_ssh_account_groups.stdout.split() | length > 1
+  changed_when: true
+
+- name: Install the principals directory
+  ansible.builtin.file:
+    path: "{{ fleet_ssh_principals_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the per-account principals file
+  ansible.builtin.copy:
+    dest: "{{ fleet_ssh_principals_dir }}/{{ fleet_ssh_user }}"
+    content: "{{ fleet_ssh_principals | join('\n') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+
+- name: Install the public user-CA key
+  ansible.builtin.copy:
+    dest: "{{ fleet_ssh_ca_path }}"
+    content: "{{ fleet_ssh_ca_public_key.rstrip() }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+  notify: Reload OpenSSH after validated fleet enrollment
+
+- name: Install the sshd user-CA drop-in
+  ansible.builtin.template:
+    src: 60-serviceradar-user-ca.conf.j2
+    dest: "{{ fleet_ssh_sshd_dropin_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload OpenSSH after validated fleet enrollment
