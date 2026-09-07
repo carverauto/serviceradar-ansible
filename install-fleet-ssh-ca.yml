@@ -1,0 +1,13 @@
+---
+# Enroll fleet hosts with the verified pve02 SSH user-CA layout for
+# https://github.com/carverauto/serviceradar/issues/4376.
+# In AWX, retain target_hosts=all and use the reviewed job-template limit.
+# Secrets travel only via an ansible-vault file, environment, or extra vars;
+# see docs/fleet-ssh-ca-enrollment.md. Dry-run first with --check.
+- name: Enroll fleet hosts with the pve02 SSH user-CA layout
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: fleet_ssh_enroll

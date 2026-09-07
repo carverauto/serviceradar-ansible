@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: ServiceRadar Authors
+  description: Enroll fleet hosts with the verified pve02 SSH user-CA layout.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions: [bookworm]
+dependencies: []

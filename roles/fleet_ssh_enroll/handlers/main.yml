@@ -1,0 +1,5 @@
+---
+- name: Reload OpenSSH after validated fleet enrollment
+  ansible.builtin.systemd:
+    name: "{{ fleet_ssh_service_name }}"
+    state: reloaded

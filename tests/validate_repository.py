@@ -68,6 +68,23 @@ PROXMOX_INVENTORY_REQUIRED_FILES = {
     "awx/credential-types/proxmox-api-token-ca-connect-relay/v1/injectors.json",
 }
 
+FLEET_SSH_REQUIRED_FILES = {
+    "install-fleet-ssh-ca.yml",
+    "install-fleet-ssh-known-hosts.yml",
+    "docs/fleet-ssh-ca-enrollment.md",
+    "examples/fleet-ssh-ca-inventory.yml",
+    "roles/fleet_ssh_enroll/README.md",
+    "roles/fleet_ssh_enroll/defaults/main.yml",
+    "roles/fleet_ssh_enroll/handlers/main.yml",
+    "roles/fleet_ssh_enroll/meta/argument_specs.yml",
+    "roles/fleet_ssh_enroll/meta/main.yml",
+    "roles/fleet_ssh_enroll/tasks/main.yml",
+    "roles/fleet_ssh_enroll/tasks/validate.yml",
+    "roles/fleet_ssh_enroll/tasks/enroll.yml",
+    "roles/fleet_ssh_enroll/tasks/verify.yml",
+    "roles/fleet_ssh_enroll/templates/60-serviceradar-user-ca.conf.j2",
+}
+
 PUBLIC_RUNNER_DIAGNOSTIC_REQUIRED_FILES = {
     ".forgejo/workflows/public-runner-diagnostic.yml",
     "docs/public-runner-isolation-diagnostic.md",
@@ -534,6 +551,68 @@ def check_proxmox_inventory() -> None:
     expected_relay_environment["HTTPS_PROXY"] = "{{ https_proxy }}"
     if relay_environment != expected_relay_environment:
         raise AssertionError("Proxmox relay credential injectors do not match the reviewed contract")
+
+
+def check_fleet_ssh_enroll() -> None:
+    missing = sorted(
+        name for name in FLEET_SSH_REQUIRED_FILES if not (ROOT / name).is_file()
+    )
+    if missing:
+        raise AssertionError(f"missing fleet SSH enrollment content: {missing}")
+
+    wrapper = (ROOT / "install-fleet-ssh-ca.yml").read_text(encoding="utf-8")
+    for value in (
+        "hosts: \"{{ target_hosts | default('all') }}\"",
+        "become: true",
+        "role: fleet_ssh_enroll",
+        "gather_facts: true",
+    ):
+        if value not in wrapper:
+            raise AssertionError(f"fleet SSH wrapper contract missing: {value}")
+
+    task_text = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in FLEET_SSH_REQUIRED_FILES
+        if name.endswith((".yml", ".md", ".j2"))
+    )
+    required = {
+        "password: \"!\"",
+        "TrustedUserCAKeys",
+        "AuthorizedPrincipalsFile",
+        "srp_v1_",
+        "/usr/sbin/sshd\n      - -t",
+        "sshd\n      - -T",
+        "state: reloaded",
+        "FLEET_SSH_CA_PUBLIC_KEY",
+        "FLEET_SSH_CA_FINGERPRINT",
+        "FLEET_SSH_PRINCIPALS",
+        "ssh-keyscan",
+        "known_hosts",
+    }
+    absent = sorted(value for value in required if value not in task_text)
+    if absent:
+        raise AssertionError(f"fleet SSH security boundary missing: {absent}")
+
+    forbidden = {
+        "state: restarted",
+        "ignore_errors: true",
+        "validate_certs: false",
+        "-----BEGIN PRIVATE KEY-----",
+        "10.0.0.3",
+        "192.168.2.10",
+        "192.168.2.22",
+    }
+    present = sorted(value for value in forbidden if value in task_text)
+    if present:
+        raise AssertionError(f"unsafe fleet SSH pattern present: {present}")
+
+    example = (ROOT / "examples/fleet-ssh-ca-inventory.yml").read_text(
+        encoding="utf-8"
+    )
+    if "192.0.2." not in example:
+        raise AssertionError(
+            "fleet SSH example inventory must use documentation addresses"
+        )
 
 
 def check_integrated_catalog_only() -> None:
@@ -1017,6 +1096,7 @@ def main() -> None:
     check_windows_qga()
     check_linux_trusted_ca()
     check_proxmox_inventory()
+    check_fleet_ssh_enroll()
     check_integrated_catalog_only()
     check_ci_boundary()
     check_public_runner_diagnostic()

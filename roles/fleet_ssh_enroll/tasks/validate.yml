@@ -1,0 +1,67 @@
+---
+- name: Fail closed outside the verified fleet platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Debian'
+      - ansible_facts.distribution_major_version == '12'
+    fail_msg: >-
+      Fleet SSH enrollment is verified only on Debian 12 (the pve02
+      reference). Refusing to change {{ inventory_hostname }}.
+
+- name: Require per-run public CA material and principals
+  ansible.builtin.assert:
+    that:
+      - fleet_ssh_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+      - fleet_ssh_ca_public_key.split() | length >= 2
+      - >-
+        fleet_ssh_ca_public_key.split()[0] in
+        ['ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
+        'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521']
+      - fleet_ssh_ca_public_key.split()[1] is match('^[A-Za-z0-9+/=]+$')
+      - fleet_ssh_ca_fingerprint is match('^SHA256:[A-Za-z0-9+/=]+$')
+      - fleet_ssh_principals is sequence
+      - fleet_ssh_principals is not string
+      - fleet_ssh_principals | length > 0
+    fail_msg: >-
+      Fleet SSH secrets are missing or malformed. Supply the CA public key,
+      its SHA256 fingerprint, and at least one principal via an
+      ansible-vault file (-e @site-vault.yml) or the FLEET_SSH_CA_PUBLIC_KEY,
+      FLEET_SSH_CA_FINGERPRINT, and FLEET_SSH_PRINCIPALS environment
+      variables. See docs/fleet-ssh-ca-enrollment.md.
+  no_log: true
+
+- name: Reject human-readable or option-bearing principals
+  ansible.builtin.assert:
+    that:
+      - item is match('^srp_v1_[A-Za-z0-9_-]{20,96}$')
+    fail_msg: >-
+      Principals must be opaque dusk01-policy tokens (`srp_v1_` plus 20-96
+      base64url characters), never account names or key options.
+  no_log: true
+  loop: "{{ fleet_ssh_principals }}"
+
+- name: Read sshd_config for the include check
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config
+  register: fleet_sshd_config_raw
+
+- name: Require the standard sshd_config.d include
+  ansible.builtin.assert:
+    that:
+      - (fleet_sshd_config_raw.content | b64decode) is regex('(?m)^Include /etc/ssh/sshd_config\.d/\*\.conf')
+    fail_msg: >-
+      {{ inventory_hostname }} lacks the standard sshd_config.d include;
+      refusing to drop unmanaged policy.
+
+- name: Refuse an existing sudo grant for the enrollment account
+  ansible.builtin.stat:
+    path: "/etc/sudoers.d/{{ fleet_ssh_user }}"
+  register: fleet_ssh_sudoers_dropin
+
+- name: Fail when the enrollment account already has sudo
+  ansible.builtin.assert:
+    that:
+      - not fleet_ssh_sudoers_dropin.stat.exists
+    fail_msg: >-
+      {{ fleet_ssh_user }} already has a sudoers grant on
+      {{ inventory_hostname }}; the fleet policy is no sudo.

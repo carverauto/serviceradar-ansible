@@ -1,0 +1,69 @@
+---
+- name: Prove the account is locked and privilege-free
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/passwd
+      - -S
+      - "{{ fleet_ssh_user }}"
+  register: fleet_ssh_passwd_status
+  changed_when: false
+
+- name: Require a locked password and no sudo grant
+  ansible.builtin.assert:
+    that:
+      - (fleet_ssh_passwd_status.stdout.split()[1] | upper) in ['L', 'LK']
+      - not fleet_ssh_sudoers_dropin.stat.exists
+    fail_msg: >-
+      {{ fleet_ssh_user }} on {{ inventory_hostname }} is not locked or
+      holds a sudoers grant; refusing to reload sshd.
+
+- name: Prove the installed CA key matches the pinned fingerprint
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/ssh-keygen
+      - -E
+      - sha256
+      - -l
+      - -f
+      - "{{ fleet_ssh_ca_path }}"
+  register: fleet_ssh_ca_fingerprint_actual
+  changed_when: false
+
+- name: Require the exact pinned CA fingerprint
+  ansible.builtin.assert:
+    that:
+      - fleet_ssh_ca_fingerprint in fleet_ssh_ca_fingerprint_actual.stdout
+    fail_msg: >-
+      Installed CA key on {{ inventory_hostname }} does not match the
+      pinned fingerprint; refusing to reload sshd.
+
+- name: Validate the complete sshd configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  changed_when: false
+
+- name: Read the account-aware effective sshd policy
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - "user={{ fleet_ssh_user }},addr=127.0.0.1,host=localhost"
+  register: fleet_ssh_effective_policy
+  changed_when: false
+
+- name: Require the fleet user-CA policy for the enrollment account
+  ansible.builtin.assert:
+    that:
+      - >-
+        'trustedusercakeys ' ~ (fleet_ssh_ca_path | lower)
+        in (fleet_ssh_effective_policy.stdout | lower)
+      - >-
+        'authorizedprincipalsfile ' ~ (fleet_ssh_principals_dir | lower)
+        ~ '/%u' in (fleet_ssh_effective_policy.stdout | lower)
+      - "'pubkeyauthentication yes' in (fleet_ssh_effective_policy.stdout | lower)"
+    fail_msg: >-
+      Effective sshd policy on {{ inventory_hostname }} does not carry the
+      fleet user-CA trust for {{ fleet_ssh_user }}; refusing to reload sshd.

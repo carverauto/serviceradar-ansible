@@ -1,0 +1,33 @@
+---
+argument_specs:
+  main:
+    short_description: Enroll fleet hosts with the verified pve02 SSH user-CA layout.
+    options:
+      fleet_ssh_user:
+        type: str
+        required: true
+      fleet_ssh_user_shell:
+        type: str
+        required: true
+      fleet_ssh_ca_public_key:
+        type: str
+        required: true
+      fleet_ssh_ca_fingerprint:
+        type: str
+        required: true
+      fleet_ssh_principals:
+        type: list
+        elements: str
+        required: true
+      fleet_ssh_ca_path:
+        type: str
+        required: true
+      fleet_ssh_principals_dir:
+        type: str
+        required: true
+      fleet_ssh_sshd_dropin_path:
+        type: str
+        required: true
+      fleet_ssh_service_name:
+        type: str
+        required: true

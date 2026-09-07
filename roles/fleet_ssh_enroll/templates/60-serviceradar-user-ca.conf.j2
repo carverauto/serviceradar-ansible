@@ -1,0 +1,6 @@
+# Managed for ServiceRadar fleet remote access (pve02 reference layout).
+# The CA public key and per-account principals are supplied per run via
+# ansible-vault, environment, or extra vars; they never live in this repo.
+PubkeyAuthentication yes
+TrustedUserCAKeys {{ fleet_ssh_ca_path }}
+AuthorizedPrincipalsFile {{ fleet_ssh_principals_dir }}/%u

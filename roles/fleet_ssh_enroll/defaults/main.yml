@@ -1,0 +1,52 @@
+---
+# Fleet SSH-CA enrollment defaults.
+#
+# These mirror the manually verified pve02 fix for
+# https://github.com/carverauto/serviceradar/issues/4376 : a locked,
+# privilege-free POSIX account plus OpenSSH user-CA trust whose principals
+# match the dusk01 reference policy. The public tree must never contain real
+# key material, principals, fingerprints, hostnames, or addresses: supply the
+# three required values per run from one of
+#
+#   ansible-playbook install-fleet-ssh-ca.yml -i inventory/fleet.ini \
+#     -e @/run/secrets/fleet-ssh-ca.yml            # ansible-vault encrypted file
+#   FLEET_SSH_CA_PUBLIC_KEY='ssh-ed25519 AAAA...' \
+#   FLEET_SSH_CA_FINGERPRINT='SHA256:...' \
+#   FLEET_SSH_PRINCIPALS='srp_v1_...' \
+#     ansible-playbook install-fleet-ssh-ca.yml -i inventory/fleet.ini
+#
+# Environment defaults keep `env` as a supported secret route; every required
+# value is asserted non-empty before any managed host is changed.
+
+# POSIX account created on each fleet host. pve02 uses `mfreeman`.
+fleet_ssh_user: mfreeman
+
+# Login shell for the enrollment account. Must be a usable (non-nologin) shell.
+fleet_ssh_user_shell: /bin/bash
+
+# OpenSSH public user-CA key line (for example `ssh-ed25519 AAAA... comment`).
+# Only the public key travels: the CA private key never appears in variables,
+# files, facts, or logs. Required: env FLEET_SSH_CA_PUBLIC_KEY or extra vars.
+fleet_ssh_ca_public_key: "{{ lookup('ansible.builtin.env', 'FLEET_SSH_CA_PUBLIC_KEY') }}"
+
+# Expected `ssh-keygen -E sha256 -lf` fingerprint of the CA public key above
+# (for example `SHA256:...`). Required: env FLEET_SSH_CA_FINGERPRINT or extra vars.
+fleet_ssh_ca_fingerprint: "{{ lookup('ansible.builtin.env', 'FLEET_SSH_CA_FINGERPRINT') }}"
+
+# Certificate principals written to the per-account principals file. These must
+# match the dusk01 reference policy. Comma-separated env FLEET_SSH_PRINCIPALS
+# or an extra-vars list. Required: at least one `srp_v1_` opaque principal.
+fleet_ssh_principals: >-
+  {{ lookup('ansible.builtin.env', 'FLEET_SSH_PRINCIPALS').split(',')
+  if lookup('ansible.builtin.env', 'FLEET_SSH_PRINCIPALS') | length > 0
+  else [] }}
+
+# Fixed ownership boundary, byte-identical to the verified pve02 layout.
+# These paths are intentionally not variable: the fleet must converge on one
+# layout so the ServiceRadar webconsole policy stays uniform.
+fleet_ssh_ca_path: /etc/ssh/serviceradar_user_ca.pub
+fleet_ssh_principals_dir: /etc/ssh/auth_principals
+fleet_ssh_sshd_dropin_path: /etc/ssh/sshd_config.d/60-serviceradar-user-ca.conf
+
+# systemd service reloaded (never restarted) after a validated config change.
+fleet_ssh_service_name: ssh

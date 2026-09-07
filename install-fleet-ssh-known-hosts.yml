@@ -1,0 +1,85 @@
+---
+# Collect fleet host keys into a known_hosts fragment for the ServiceRadar
+# webconsole `knownhosts` verifier (the client side of
+# https://github.com/carverauto/serviceradar/issues/4376).
+#
+# This play runs on the controller only and writes one fragment file per run.
+# Host public keys are public by design, but fleet hostnames and addresses
+# must stay out of this public repo: pass targets per run, never commit them.
+#
+#   ansible-playbook install-fleet-ssh-known-hosts.yml \
+#     -e '{"fleet_host_key_targets": ["fleet-host-01.example.net"]}' \
+#     -e fleet_known_hosts_path=/tmp/fleet-known-hosts
+#
+# Install the resulting fragment into the ServiceRadar host's known_hosts
+# bundle with ssh-keygen -Hf and restart the webconsole service.
+- name: Collect fleet host keys for the webconsole known_hosts bundle
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    fleet_host_key_targets: []
+    fleet_known_hosts_path: /tmp/fleet-known-hosts
+    fleet_host_key_types: ed25519,rsa,ecdsa
+
+  tasks:
+    - name: Require per-run fleet targets
+      ansible.builtin.assert:
+        that:
+          - fleet_host_key_targets is sequence
+          - fleet_host_key_targets is not string
+          - fleet_host_key_targets | length > 0
+        fail_msg: >-
+          Supply fleet_host_key_targets per run (extra vars or vault). Fleet
+          hostnames and addresses must never be committed to this repo.
+
+    - name: Scan one fleet host key set
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/ssh-keyscan
+          - -t
+          - "{{ fleet_host_key_types }}"
+          - "{{ item }}"
+      loop: "{{ fleet_host_key_targets }}"
+      register: fleet_host_key_scans
+      changed_when: false
+
+    - name: Require at least one key per fleet target
+      ansible.builtin.assert:
+        that:
+          - item.stdout is regex('(?m)^(\\S+) \\S+ \\S+')
+        fail_msg: "Host key scan returned no keys for {{ item.item }}."
+      loop: "{{ fleet_host_key_scans.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Write the managed known_hosts fragment
+      ansible.builtin.copy:
+        dest: "{{ fleet_known_hosts_path }}"
+        content: |
+          # Managed by install-fleet-ssh-known-hosts.yml for serviceradar issue 4376.
+          # Refresh with the same playbook; install with `ssh-keygen -Hf fragment`.
+          {% for scan in fleet_host_key_scans.results %}
+          {{ scan.stdout }}
+          {% endfor %}
+        mode: "0644"
+
+    - name: Prove every fragment entry parses as a host key
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/ssh-keygen
+          - -l
+          - -f
+          - "{{ fleet_known_hosts_path }}"
+      register: fleet_known_hosts_fingerprints
+      changed_when: false
+
+    - name: Report the fragment fingerprint count
+      ansible.builtin.debug:
+        msg: >-
+          Wrote {{ fleet_known_hosts_fingerprints.stdout_lines | length }}
+          host keys to {{ fleet_known_hosts_path }}. Install the fragment
+          into the ServiceRadar known_hosts bundle to clear the
+          `knownhosts: key is unknown` webconsole failures.
