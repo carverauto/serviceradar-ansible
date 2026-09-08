@@ -1,0 +1,40 @@
+---
+- name: Inspect the installed pinned package identity
+  ansible.builtin.stat:
+    path: /etc/serviceradar/agent-package.sha256
+    follow: false
+    get_checksum: false
+    get_mime: false
+  register: serviceradar_package_identity_file
+  when: serviceradar_use_pinned_package
+
+- name: Require a regular package identity marker
+  ansible.builtin.assert:
+    that:
+      - >-
+        not serviceradar_package_identity_file.stat.exists or
+        serviceradar_package_identity_file.stat.isreg | default(false)
+    fail_msg: The installed package SHA-256 marker must be a regular file.
+  when: serviceradar_use_pinned_package
+
+- name: Read the installed pinned package SHA-256
+  ansible.builtin.slurp:
+    src: /etc/serviceradar/agent-package.sha256
+  register: serviceradar_package_identity
+  when:
+    - serviceradar_use_pinned_package
+    - serviceradar_package_identity_file.stat.isreg | default(false)
+
+- name: Compare the requested package version and artifact identity
+  ansible.builtin.set_fact:
+    serviceradar_package_install_required: >-
+      {{ serviceradar_installed_version != serviceradar_target_version or
+         (serviceradar_use_pinned_package and
+          (serviceradar_package_identity.content | default('') | b64decode | trim) !=
+          (serviceradar_agent_package_sha256 | lower)) }}
+
+- name: Require reinstallation for a different pin at the installed version
+  ansible.builtin.set_fact:
+    serviceradar_reinstall_pinned_package: >-
+      {{ serviceradar_use_pinned_package and serviceradar_package_install_required and
+         serviceradar_installed_version == serviceradar_target_version }}

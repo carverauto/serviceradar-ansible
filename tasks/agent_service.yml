@@ -1,0 +1,70 @@
+---
+- name: Inspect agent enrollment assets without reading their contents
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    get_checksum: false
+    get_mime: false
+  loop:
+    - /etc/serviceradar/agent.json
+    - /etc/serviceradar/certs/component.pem
+    - /etc/serviceradar/certs/component-key.pem
+    - /etc/serviceradar/certs/ca-chain.pem
+  register: serviceradar_enrollment_assets
+
+- name: Record enrollment readiness
+  ansible.builtin.set_fact:
+    serviceradar_enrollment_ready: >-
+      {{ serviceradar_enrollment_assets.results
+         | selectattr('stat.isreg', 'defined')
+         | selectattr('stat.isreg', 'equalto', true) | list | length == 4 }}
+
+# The agent runtime directory holds the edge-record spool (edge-records/,
+# created by the agent on first start). The package creates it too; ensure it
+# here so hosts whose install step was skipped at the target version still
+# start with a writable runtime directory owned by the agent user.
+- name: Ensure the agent runtime directory exists
+  ansible.builtin.file:
+    path: /var/lib/serviceradar/agent
+    state: directory
+    owner: serviceradar
+    group: serviceradar
+    mode: "0755"
+
+- name: Enable the agent and start it only when enrollment assets exist
+  ansible.builtin.systemd_service:
+    name: "{{ serviceradar_service_name }}"
+    enabled: true
+    state: "{{ 'started' if serviceradar_enrollment_ready else omit }}"
+    daemon_reload: true
+
+- name: Verify the enrolled agent service is active
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ serviceradar_service_name }}"]
+  register: serviceradar_service_active
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: serviceradar_service_active.rc == 0
+  when:
+    - serviceradar_enrollment_ready
+    - not ansible_check_mode
+
+- name: Report package and enrollment state
+  ansible.builtin.debug:
+    msg:
+      version: "{{ serviceradar_target_version }}"
+      status: >-
+        {{ 'planned' if ansible_check_mode else
+           ('installed_service_active' if serviceradar_enrollment_ready else 'installed_awaiting_enrollment') }}
+      enrollment: >-
+        {{ 'Enrollment assets exist; verify a fresh agent heartbeat in ServiceRadar.'
+           if serviceradar_enrollment_ready
+           else 'Run srctl enroll with a separately issued onboarding token, then start serviceradar-agent.' }}
+
+- name: Explain that legacy enrollment inputs are not applied
+  ansible.builtin.debug:
+    msg: >-
+      serviceradar_gateway_url and serviceradar_join_token are not applied by
+      this installer. Use srctl enroll with a separately issued onboarding token.
+  when: serviceradar_gateway_url is defined or serviceradar_join_token is defined

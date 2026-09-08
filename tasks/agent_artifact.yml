@@ -1,0 +1,122 @@
+---
+- name: Require both pinned artifact inputs together
+  ansible.builtin.assert:
+    that:
+      - (serviceradar_agent_package_url is defined) == (serviceradar_agent_package_sha256 is defined)
+    fail_msg: >-
+      Supply serviceradar_agent_package_url and serviceradar_agent_package_sha256
+      together, plus serviceradar_version, or omit both to discover a GitHub release.
+
+- name: Select pinned artifact or GitHub release discovery
+  ansible.builtin.set_fact:
+    serviceradar_use_pinned_package: "{{ serviceradar_agent_package_url is defined }}"
+
+- name: Validate the pinned artifact contract
+  ansible.builtin.assert:
+    that:
+      - serviceradar_agent_package_url is string
+      - serviceradar_agent_package_url is match('^https?://[^\s]+$')
+      - serviceradar_agent_package_sha256 is string
+      - serviceradar_agent_package_sha256 is match('^[A-Fa-f0-9]{64}$')
+      - serviceradar_version is defined
+      - serviceradar_version | default('') is string
+      - serviceradar_version | default('') is match('^v?[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$')
+    fail_msg: >-
+      Pinned packages require an HTTP(S) artifact URL, a 64-character SHA-256,
+      and an explicit serviceradar_version matching the package version.
+  when: serviceradar_use_pinned_package
+
+- name: Resolve the requested GitHub release
+  when: not serviceradar_use_pinned_package
+  block:
+    - name: Resolve release endpoint
+      ansible.builtin.set_fact:
+        serviceradar_release_url: >-
+          {{ serviceradar_api_base }}/releases/{{
+            'tags/v' ~ (serviceradar_version | regex_replace('^v', ''))
+            if serviceradar_version is defined
+            else 'latest' }}
+
+    - name: Fetch release metadata from GitHub
+      ansible.builtin.uri:
+        url: "{{ serviceradar_release_url }}"
+        return_content: true
+        validate_certs: "{{ serviceradar_validate_certs }}"
+        status_code: [200, 404]
+      register: serviceradar_release
+      retries: 3
+      delay: 5
+      until: serviceradar_release.status | default(0) in [200, 404]
+      check_mode: false
+
+    - name: Require a published GitHub release with package assets
+      ansible.builtin.assert:
+        that:
+          - serviceradar_release.status == 200
+          - serviceradar_release.json is defined
+          - serviceradar_release.json is mapping
+          - serviceradar_release.json.tag_name is defined
+          - serviceradar_release.json.assets | default([]) | length > 0
+        fail_msg: >-
+          No published ServiceRadar GitHub release with package assets is
+          available for this version. Supply a reviewed package using
+          serviceradar_agent_package_url, serviceradar_agent_package_sha256,
+          and serviceradar_version.
+
+- name: Record the exact target package version
+  ansible.builtin.set_fact:
+    serviceradar_target_version: >-
+      {{ (serviceradar_version if serviceradar_use_pinned_package
+          else serviceradar_release.json.tag_name) | regex_replace('^v', '') }}
+
+- name: Validate target package version
+  ansible.builtin.assert:
+    that:
+      - serviceradar_target_version is match('^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$')
+    fail_msg: The selected release must have a supported semantic package version.
+
+- name: Use the pinned artifact without release discovery
+  ansible.builtin.set_fact:
+    serviceradar_package_download_url: "{{ serviceradar_agent_package_url }}"
+    serviceradar_package_checksum: "sha256:{{ serviceradar_agent_package_sha256 | lower }}"
+  when: serviceradar_use_pinned_package
+
+- name: Select the release package for this architecture
+  when: not serviceradar_use_pinned_package
+  block:
+    - name: Select matching release package assets
+      ansible.builtin.set_fact:
+        serviceradar_matched_assets: >-
+          {{ serviceradar_release.json.assets
+             | selectattr('name', 'match', serviceradar_agent_asset_pattern)
+             | list }}
+
+    - name: Require exactly one matching release package
+      ansible.builtin.assert:
+        that:
+          - serviceradar_matched_assets | length == 1
+        fail_msg: >-
+          Release {{ serviceradar_release.json.tag_name }} must publish exactly
+          one serviceradar-agent {{ serviceradar_package_extension }} package
+          for {{ serviceradar_package_arch }}. Supply a pinned package URL,
+          SHA-256, and version if no matching release asset is available.
+
+    - name: Select the optional published checksum sidecar
+      ansible.builtin.set_fact:
+        serviceradar_checksum_assets: >-
+          {{ serviceradar_release.json.assets
+             | selectattr('name', 'equalto', serviceradar_matched_assets[0].name ~ '.sha256')
+             | list }}
+
+    - name: Record release artifact URL and available checksum
+      ansible.builtin.set_fact:
+        serviceradar_package_download_url: "{{ serviceradar_matched_assets[0].browser_download_url }}"
+        serviceradar_package_checksum: >-
+          {{ ('sha256:' ~ serviceradar_checksum_assets[0].browser_download_url)
+             if serviceradar_checksum_assets | length > 0 else '' }}
+
+- name: Record the target-local package download path
+  ansible.builtin.set_fact:
+    serviceradar_package_download_path: >-
+      {{ '/tmp/serviceradar-agent-' ~ serviceradar_target_version ~ '-'
+         ~ serviceradar_package_arch ~ '.' ~ serviceradar_package_extension }}

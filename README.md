@@ -153,132 +153,103 @@ controller/inventory/host identity. See the
 
 ## Agent installation content
 
-Ansible playbooks for installing the [ServiceRadar](https://code.carverauto.dev/carverauto/serviceradar)
-agent on managed hosts. This repository is registered as a git playbook
-project in ServiceRadar/AWX; all playbooks live at the repository root so
-the AWX project sync lists them.
+The root `install-agent-debian.yml` and `install-agent-redhat.yml` playbooks
+install the [ServiceRadar](https://github.com/carverauto/serviceradar) agent on
+Debian-family and RedHat-family Linux hosts respectively. They require an
+existing Ansible SSH connection and privilege escalation. `ping.yml` remains a
+read-only connectivity check; it does not install or enroll an agent.
 
-## Playbooks
+Both installers select a package for the target architecture, verify the exact
+installed version, and enable the `serviceradar-agent` systemd service. They
+start the service only when its enrollment configuration and certificates
+already exist. An installed package without those assets is reported as
+`installed_awaiting_enrollment`.
 
-| Playbook | Purpose |
-| --- | --- |
-| `ping.yml` | Smoke test for the AWX -> device launch path. `ansible.builtin.ping` plus a fact-based debug line printing hostname, default IPv4, distro, and architecture. Read-only, no `become`. |
-| `install-agent-debian.yml` | Installs `serviceradar-agent` on Debian/Ubuntu hosts (`apt`, `.deb`). |
-| `install-agent-redhat.yml` | Installs `serviceradar-agent` on RHEL/Rocky/Alma/Fedora hosts (`dnf`/`dnf5`/`yum` via `ansible.builtin.package`, `.rpm`). |
-| `install-qemu-guest-agent-windows.yml` | Installs and verifies QEMU Guest Agent on a pre-bootstrapped Windows QEMU/Proxmox guest. |
-| `install-linux-trusted-ca.yml` | Installs or removes fingerprint-pinned public CA trust and optionally verifies private HTTPS endpoints. |
-| `install-fleet-ssh-ca.yml` | Enrolls Debian 12 fleet hosts with the verified pve02 SSH user-CA layout (locked account, CA trust, dusk01-policy principals). Secrets via vault/env/extra-vars only. |
-| `install-fleet-ssh-known-hosts.yml` | Controller-local host-key collection into a `known_hosts` fragment for the webconsole verifier. Targets per run, never committed. |
-| `qemu-guest-agent-windows-preflight.yml` | Read-only discovery of mounted QGA MSI path, SHA-256, and Authenticode status. |
+### Pinned package deployment
 
-Both installers:
+Use all three variables together to deploy a reviewed artifact without making
+any release API request:
 
-1. Resolve the release at runtime from the Forgejo API
-   (`https://code.carverauto.dev/api/v1/repos/carverauto/serviceradar/releases/latest`,
-   or `/releases/tags/v<version>` when `serviceradar_version` is set). The
-   API call and download run **on the managed host**, so targets need
-   outbound HTTPS to `code.carverauto.dev`.
-2. Pick the asset matching the host architecture (see mapping below) and
-   fail with the list of published agent assets if none matches.
-3. Skip download + install when the exact target version is already
-   installed (`dpkg-query` / `rpm -q`); a second run reports no changes.
-4. Download to `/tmp`, install, delete the downloaded package.
-5. Ensure the `serviceradar-agent` systemd service is **enabled and
-   started**.
-
-### Variables
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `target_hosts` | `all` | Host pattern for the play. In AWX, prefer leaving this alone and using the job template **limit** instead. |
-| `serviceradar_version` | latest release | Pin a release, e.g. `1.4.2` or `v1.4.2` (leading `v` optional). |
-| `serviceradar_validate_certs` | `true` | Set `false` only behind TLS-intercepting proxies. |
-| `serviceradar_gateway_url` | unset | **Accepted but not applied** — see [Enrollment](#enrollment). The playbook prints a warning if set. |
-| `serviceradar_join_token` | unset | **Accepted but not applied** — see [Enrollment](#enrollment). |
-
-## Release artifact naming (observed from the API)
-
-Verified against the latest release (`v1.4.2`) via
-`GET /api/v1/repos/carverauto/serviceradar/releases/latest` (no auth
-required):
-
-- Debian package: `serviceradar-agent_1.4.2_amd64.deb`
-  → pattern `serviceradar-agent_<version>_<debarch>.deb`
-- RPM package: `serviceradar-agent-1.4.2-1-1.4.2-1.x86_64.rpm`
-  → pattern `serviceradar-agent-<version>-<release>-<version>-<release>.<rpmarch>.rpm`
-  (the doubled version-release is a CI artifact-naming quirk; the package
-  inside is NVR `serviceradar-agent-<version>-<release>.<arch>`)
-- Tarball (not used here): `serviceradar-agent_1.4.2_linux_amd64.tar.gz`
-- Beware the near-miss `serviceradar-agent-gateway…` assets — those are a
-  different component; the playbooks anchor their asset regex on
-  `serviceradar-agent<sep><version>` to exclude them.
-
-Architecture handling: `x86_64 -> amd64` for `.deb`, `x86_64` kept as-is
-for `.rpm`; `aarch64`/`arm64` are mapped (`arm64` deb, `aarch64` rpm).
-**As of v1.4.2 only amd64/x86_64 agent packages are published** — on an
-ARM host the playbook fails fast with a clear message listing the assets
-that do exist.
-
-### Checksums
-
-The `v1.4.2` release publishes **no per-package checksums** for the `.deb`
-/ `.rpm` assets (no `.sha256` sidecars, no checksums file). The only
-checksum published is inside `serviceradar-agent-release-manifest.json`,
-which covers just the `linux_amd64` tarball used by the agent
-self-updater. The packages are also not GPG-signed. Downloads therefore
-run without checksum verification over TLS; if a `<asset>.sha256` sidecar
-appears in a future release the playbooks pick it up and enforce it
-automatically. RPM note: local installs succeed because dnf's
-`localpkg_gpgcheck` defaults to off; hardened hosts that enable it must
-relax it for this package.
-
-## Package, service, and config facts
-
-- Package name (deb and rpm): `serviceradar-agent`
-- Systemd unit: `serviceradar-agent.service` (runs as user
-  `serviceradar`, `Restart=always`; the package postinstall also enables
-  it)
-- Config shipped by the package: `/etc/serviceradar/agent.json`
-  (`gateway_addr`, mTLS `gateway_security`), certs expected under
-  `/etc/serviceradar/certs/`
-
-### Enrollment
-
-The package intentionally does not take a gateway URL or join token via a
-config drop-in: the agent enrolls against the agent-gateway with an
-onboarding token using the bundled CLI:
-
-```sh
-serviceradar-cli enroll   # uses an onboarding token issued by the core
+```yaml
+serviceradar_version: "5.6.7"
+serviceradar_agent_package_url: "https://artifacts.example.com/serviceradar-agent_5.6.7_amd64.deb"
+serviceradar_agent_package_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
-Until enrollment assets exist (`/etc/serviceradar/agent.json` +
-`/etc/serviceradar/certs/*.pem`), the started service retries/restarts on
-its own (`Restart=always`) — that is expected. Because no config drop-in
-exists, these playbooks deliberately do **not** template
-`serviceradar_gateway_url` / `serviceradar_join_token` into any file
-(inventing paths would be worse than skipping); they only print a warning
-when those vars are set. The smoke goal of the installers is package
-installed + service up.
+These values are synthetic examples. Supply the URL, actual package version,
+and independently obtained SHA-256 of the package being deployed. The URL may
+use HTTP or HTTPS; the required checksum is enforced in either case. The
+managed host downloads the package, so it needs access to that artifact URL.
+Use the RPM installer and its matching artifact for RPM-based hosts. A partial
+pin, an invalid checksum, or a missing version fails before any download.
 
-## AWX job template setup
+### GitHub release discovery
 
-1. **Project**: this repository
-   (`ssh://git@git.carverauto.dev/carverauto/serviceradar-ansible.git`,
-   branch `main`). Playbooks are at the repo root, so the project sync lists
-   every supported wrapper.
-2. **Inventory**: the ServiceRadar device inventory.
-3. **Job template (smoke)**: playbook `ping.yml`, machine credential for
-   the device, **limit** = target hostname. No extra vars needed. Run
-   this first to prove the AWX -> device path cheaply.
-4. **Job template (install)**: playbook `install-agent-debian.yml` or
-   `install-agent-redhat.yml`, machine credential, *privilege
-   escalation* enabled (plays use `become: true`), **limit** = target
-   host(s). Optional `extra_vars`:
+When both pinned artifact inputs are omitted, the installers resolve
+`https://api.github.com/repos/carverauto/serviceradar/releases/latest`, or
+`/releases/tags/v<version>` when `serviceradar_version` is provided. Targets
+need access to the GitHub API and the returned package download URLs.
+A missing release or missing/ambiguous package fails with instructions to use
+the pinned package inputs.
 
-   ```yaml
-   serviceradar_version: 1.4.2   # omit to track latest
-   ```
+Debian asset names must match `serviceradar-agent_<version>_<architecture>.deb`.
+RPM names must start with `serviceradar-agent-<version>` and end in
+`.<architecture>.rpm`. These patterns exclude the agent-gateway packages.
+Debian maps `x86_64` to `amd64` and `aarch64` to `arm64`; RPM uses `x86_64` or
+`aarch64`. Exactly one matching asset must be available.
 
-Each installer asserts the host's `os_family`, so launching the wrong
-variant against a host fails immediately with a pointer to the right one.
+Release discovery uses a `<package-name>.sha256` sidecar when one is present.
+Pinned deployment always requires SHA-256. The installers do not disable
+package-manager signature policy; RPM hosts requiring signed local packages
+must use an artifact that satisfies their configured policy.
+
+### Installer inputs
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `serviceradar_version` | Latest GitHub release | Required with a pinned URL; leading `v` is optional. |
+| `serviceradar_agent_package_url` | Unset | Exact HTTP(S) package URL; requires SHA-256 and version. |
+| `serviceradar_agent_package_sha256` | Unset | Exact 64-character package SHA-256. |
+| `target_hosts` | `all` | Leave this default in AWX and use the reviewed job limit. |
+| `serviceradar_validate_certs` | `true` | HTTPS certificate verification for metadata and downloads. |
+
+Pinned deployment records the verified package SHA-256 in
+`/etc/serviceradar/agent-package.sha256`, owned by root. A changed or unrecorded
+pin installs the requested bytes even when the package version is unchanged;
+the same version and pin skip download and installation on subsequent runs.
+GitHub release discovery remains version-based. The installers check the
+installed version before recording a pin and verify that an
+enrolled agent's service is active. A successful service check does not prove
+connectivity; verify a fresh agent heartbeat in ServiceRadar after deployment.
+
+### Separate enrollment
+
+The package includes `srctl`. Enroll each new agent using a separately issued
+onboarding token with `srctl enroll`, then start `serviceradar-agent`. The
+installers do not accept or persist onboarding secrets and do not configure a
+gateway from `serviceradar_gateway_url` or `serviceradar_join_token`.
+
+Enrollment readiness requires these existing files:
+
+- `/etc/serviceradar/agent.json`
+- `/etc/serviceradar/certs/component.pem`
+- `/etc/serviceradar/certs/component-key.pem`
+- `/etc/serviceradar/certs/ca-chain.pem`
+
+Their contents are not read by the readiness check. Existing enrollment assets
+remain in place during an upgrade. Hosts without them have the package and
+enabled service installed, awaiting explicit enrollment; the installer does
+not force an unconfigured service to start.
+
+### AWX deployment
+
+Sync this repository into an AWX project and pin the reviewed SCM revision.
+Create separate templates for `install-agent-debian.yml` and
+`install-agent-redhat.yml`, using a reviewed execution environment and machine
+credential with privilege escalation. Keep artifact inputs fixed for the
+rollout and let ServiceRadar supply the exact canonical device limit.
+
+Deploy one canary of each operating-system family first. Check the package
+version, service state, and a fresh connected-agent heartbeat before expanding
+to the remaining compatible inventory hosts. Record unenrolled or failed hosts
+explicitly; an AWX job completing does not establish agent connectivity.
