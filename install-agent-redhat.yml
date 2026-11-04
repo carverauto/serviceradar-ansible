@@ -159,6 +159,19 @@
             path: "/tmp/{{ serviceradar_agent_asset.name }}"
             state: absent
 
+    # The agent runtime directory holds the edge-record spool
+    # (edge-records/, created by the agent on first start). The package
+    # creates it too; ensure it here so hosts whose install step was
+    # skipped at the target version still start with a writable runtime
+    # directory owned by the agent user.
+    - name: Ensure the agent runtime directory exists
+      ansible.builtin.file:
+        path: /var/lib/serviceradar/agent
+        state: directory
+        owner: serviceradar
+        group: serviceradar
+        mode: "0755"
+
     - name: Ensure serviceradar-agent service is enabled and started
       ansible.builtin.systemd_service:
         name: "{{ serviceradar_service_name }}"
