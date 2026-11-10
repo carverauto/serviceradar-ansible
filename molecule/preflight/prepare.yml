@@ -4,6 +4,11 @@
   become: true
   gather_facts: true
   tasks:
+    - name: Refresh the fixture package index, which the images ship empty
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
     - name: Install OpenSSH server fixture package
       ansible.builtin.package:
         name: openssh-server

@@ -36,6 +36,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- Run the quality gate in GitHub Actions for every pull request and push to
+  `main`, on secretless GitHub-hosted `ubuntu-24.04` runners with actions
+  pinned to full commits. The repository contract checks now validate that
+  workflow instead of the retired Forgejo one.
+- Pin the collections the Molecule Docker driver needs in
+  `molecule/preflight/collections.yml`; the retired runner carried them
+  preinstalled and nothing in the repository declared them.
 - Install the ServiceRadar agent from GitHub releases or an explicit package
   URL, SHA-256, and version, instead of the retired release host. The
   installers start the agent only when its enrollment assets exist.
@@ -51,8 +58,31 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Accept a stock Rocky Linux 9 host in the SSH user-CA preflight. It rejected
+  every unmanaged drop-in containing an `Include`, which includes the
+  distribution's own `50-redhat.conf`. Preflight now tolerates exactly the line
+  `Include /etc/crypto-policies/back-ends/opensshserver.config` in exactly that
+  file, and reads the included back-end, failing closed if it is unreadable,
+  not a root-controlled regular file, or contains an `Include`, `Match`,
+  `TrustedUserCAKeys`, or `AuthorizedPrincipalsFile` directive. Every other
+  nested include and every Match or CA/principal directive is still rejected.
+- Reject sshd keywords written with `=` or quotes in the SSH user-CA preflight.
+  The rules that refuse `Include`, `Match`, `TrustedUserCAKeys` and
+  `AuthorizedPrincipalsFile` in the main configuration and in unmanaged
+  drop-ins required whitespace after the keyword, but sshd also accepts
+  `Keyword=value`, `Keyword = value` and a quoted keyword. Those forms are now
+  rejected like the whitespace form. An effective `TrustedUserCAKeys` path
+  containing a space is no longer read as unset.
+- Make the Molecule preflight scenario runnable: use the digest-pinned fixture
+  images without a local rebuild and refresh the fixture package index.
 - Report a rate-limited or otherwise unusable agent release lookup with its
   cause and the pinned package inputs, rather than a dump of response headers.
 - Let the agent installers complete in check mode and report the planned
   package action instead of failing on a package file that a dry run never
   downloads.
+
+### Removed
+
+- The Forgejo workflow definitions, which no longer run, and the controlled
+  public-runner isolation workflow, script, and runbook that tested the
+  retired self-hosted runner.

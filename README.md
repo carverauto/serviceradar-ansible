@@ -9,10 +9,13 @@ contains five independent content families:
 - CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
-Repository CI runs on a repository-scoped, one-job public runner. Maintainers
-must complete the manual
-[`public runner isolation diagnostic`](docs/public-runner-isolation-diagnostic.md)
-before enabling normal public pull-request jobs on a new or rebuilt runner.
+Repository CI is the GitHub Actions workflow
+[`.github/workflows/quality.yml`](.github/workflows/quality.yml). It runs for
+every pull request and for pushes to `main` on GitHub-hosted `ubuntu-24.04`
+runners, with a read-only token and no secrets, so fork pull requests get the
+same gate. It must not be moved to a self-hosted runner. Run the same checks
+locally with `scripts/check.sh` after installing `requirements-ci.lock` and
+`requirements.yml`.
 
 ## SSH remote-access enrollment
 
@@ -37,7 +40,10 @@ The safe lifecycle is intentionally split across AWX jobs:
 Supported targets are Ubuntu 22.04/24.04, Debian 12, and Rocky Linux 9 with a
 single non-socket-activated systemd ssh/sshd instance and the standard
 `/etc/ssh/sshd_config.d/*.conf` include. The first release fails closed on
-unknown layouts and higher-risk targets such as hypervisors.
+unknown layouts and higher-risk targets such as hypervisors. On Rocky Linux 9
+the stock `50-redhat.conf` crypto-policy `Include` is the one nested include
+preflight accepts; see the
+[supported matrix](docs/remote-access-ssh-ca.md#supported-matrix).
 
 ### Security modes
 

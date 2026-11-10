@@ -17,15 +17,13 @@ python3 -m py_compile \
   tests/test_workflow_yaml_contract.py \
   tests/validate_repository.py
 bash -n roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-rollback
-bash -n scripts/public_runner_diagnostic.sh
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "FAIL: shellcheck is required for repository shell gates" >&2
   exit 1
 fi
 shellcheck \
   roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-rollback \
-  scripts/check.sh \
-  scripts/public_runner_diagnostic.sh
+  scripts/check.sh
 python3 scripts/content_digest.py
 
 if command -v yamllint >/dev/null 2>&1; then

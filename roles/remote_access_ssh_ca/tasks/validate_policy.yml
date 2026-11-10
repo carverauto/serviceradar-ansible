@@ -124,7 +124,7 @@
   ansible.builtin.assert:
     that:
       - >-
-        (item.stdout | regex_findall('(?im)^trustedusercakeys\\s+(\\S+)$') |
+        (item.stdout | regex_findall('(?im)^trustedusercakeys\\s+(.+)$') |
          first | default('none')) in ['none', sr_ra_trusted_ca_path]
       - >-
         (item.stdout | regex_findall('(?im)^authorizedprincipalsfile\\s+(.+)$') |
