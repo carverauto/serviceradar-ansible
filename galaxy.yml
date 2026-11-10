@@ -16,8 +16,8 @@ tags:
   - qemu
   - proxmox
   - serviceradar
-repository: https://code.carverauto.dev/carverauto/serviceradar-ansible
-issues: https://code.carverauto.dev/carverauto/serviceradar-ansible/issues
+repository: https://github.com/carverauto/serviceradar-ansible
+issues: https://github.com/carverauto/serviceradar-ansible/issues
 dependencies:
   ansible.windows: ">=2.4.0,<3.0.0"
 build_ignore:
@@ -25,7 +25,7 @@ build_ignore:
   - .ansible-lint
   - .cache
   - .collections
-  - .forgejo
+  - .github
   - .gitignore
   - .molecule
   - .venv

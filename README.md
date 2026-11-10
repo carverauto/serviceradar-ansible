@@ -9,10 +9,13 @@ contains five independent content families:
 - CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
-Repository CI runs on a repository-scoped, one-job public runner. Maintainers
-must complete the manual
-[`public runner isolation diagnostic`](docs/public-runner-isolation-diagnostic.md)
-before enabling normal public pull-request jobs on a new or rebuilt runner.
+Repository CI is the GitHub Actions workflow
+[`.github/workflows/quality.yml`](.github/workflows/quality.yml). It runs for
+every pull request and for pushes to `main` on GitHub-hosted `ubuntu-24.04`
+runners, with a read-only token and no secrets, so fork pull requests get the
+same gate. It must not be moved to a self-hosted runner. Run the same checks
+locally with `scripts/check.sh` after installing `requirements-ci.lock` and
+`requirements.yml`.
 
 ## SSH remote-access enrollment
 

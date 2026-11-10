@@ -193,12 +193,12 @@ quarantine.
 
 Never import a moving branch into a production template.
 
-Public pull-request CI runs only on the versioned, disposable, secretless
-`serviceradar-public-ephemeral-ubuntu-24.04-20260701` runner pool. Molecule uses
-a repository-scoped one-job runner inside a disposable VM, then an LXC job with
-its own inner Docker daemon. The runner has no Kubernetes service-account token,
-OpenBao access, signing material, private-LAN egress, persistent workspace, or
-cross-job Docker state. Workflows never mount a trusted host or Kubernetes
-runner Docker socket. Organization runner policy must keep signing and other
-trusted labels unavailable to this public repository even if a pull request
-modifies workflow YAML.
+Public pull-request CI runs only on GitHub-hosted `ubuntu-24.04` runners: a
+fresh single-job virtual machine with a read-only repository token and no
+workflow secrets. Molecule uses that machine's own Docker daemon, so there is
+no persistent workspace or cross-job Docker state. Each job first fails closed
+if it is not on a GitHub-hosted runner or if a privileged credential variable
+is present. The workflow must never select a self-hosted runner, reference a
+secret, or use a `pull_request_target` trigger, because a pull request from a
+fork can modify workflow YAML; the repository contract checks reject each of
+those changes.

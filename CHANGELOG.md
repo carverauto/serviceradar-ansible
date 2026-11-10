@@ -36,6 +36,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- Run the quality gate in GitHub Actions for every pull request and push to
+  `main`, on secretless GitHub-hosted `ubuntu-24.04` runners with actions
+  pinned to full commits. The repository contract checks now validate that
+  workflow instead of the retired Forgejo one.
 - Install the ServiceRadar agent from GitHub releases or an explicit package
   URL, SHA-256, and version, instead of the retired release host. The
   installers start the agent only when its enrollment assets exist.
@@ -56,3 +60,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Let the agent installers complete in check mode and report the planned
   package action instead of failing on a package file that a dry run never
   downloads.
+
+### Removed
+
+- The Forgejo workflow definitions, which no longer run, and the controlled
+  public-runner isolation workflow, script, and runbook that tested the
+  retired self-hosted runner.
