@@ -11,6 +11,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 IGNORED_DIRS = {".git", ".venv", ".ansible", ".cache", ".collections", ".molecule", "__pycache__"}
+# Published examples use the RFC 5737 documentation ranges, never an address
+# from a private (RFC 1918) network.
+PRIVATE_ADDRESS = re.compile(
+    r"(?<![0-9.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))"
+    r"\.\d{1,3}\.\d{1,3}(?![0-9.])"
+)
 
 INTEGRATED_WRAPPERS = {
     "remote-access-integrated-preflight.yml": ("preflight", "present", "enroll"),
@@ -398,7 +404,7 @@ def check_windows_qga() -> None:
     public_lab_leaks = []
     for path in WINDOWS_QGA_REQUIRED_FILES:
         content = (ROOT / path).read_text(encoding="utf-8")
-        if "192.168.2.126" in content:
+        if PRIVATE_ADDRESS.search(content):
             public_lab_leaks.append(path)
     if public_lab_leaks:
         raise AssertionError(f"private lab target leaked into public content: {public_lab_leaks}")
@@ -598,11 +604,9 @@ def check_fleet_ssh_enroll() -> None:
         "ignore_errors: true",
         "validate_certs: false",
         "-----BEGIN PRIVATE KEY-----",
-        "10.0.0.3",
-        "192.168.2.10",
-        "192.168.2.22",
     }
     present = sorted(value for value in forbidden if value in task_text)
+    present += sorted(set(PRIVATE_ADDRESS.findall(task_text)))
     if present:
         raise AssertionError(f"unsafe fleet SSH pattern present: {present}")
 

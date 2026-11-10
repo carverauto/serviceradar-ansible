@@ -1,7 +1,7 @@
 ---
 argument_specs:
   main:
-    short_description: Enroll fleet hosts with the verified pve02 SSH user-CA layout.
+    short_description: Enroll fleet hosts with the verified reference SSH user-CA layout.
     options:
       fleet_ssh_user:
         type: str

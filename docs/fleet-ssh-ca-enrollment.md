@@ -1,29 +1,32 @@
 # Fleet SSH-CA enrollment operator guide
 
-Replicates the manually verified **pve02** fix to the rest of the fleet for
+Converges every fleet host on one manually verified reference layout for
 [serviceradar#4376](https://github.com/carverauto/serviceradar/issues/4376)
 (`knownhosts: key is unknown` in the webconsole). Two halves:
 
 1. **Server side** (`install-fleet-ssh-ca.yml`): create the locked,
    privilege-free POSIX user and install the user-CA trust plus
-   dusk01-policy principals on every fleet host.
+   opaque policy principals on every fleet host.
 2. **Client side** (`install-fleet-ssh-known-hosts.yml`): collect fleet host
    keys into a fragment and install it in the ServiceRadar host's
    `known_hosts` bundle so the Go `knownhosts` verifier accepts the fleet.
 
-## Reference layout (pve02, verified 2026-09-07)
+## Reference layout
 
-| Item | pve02 value |
+`<user>` is the `fleet_ssh_user` account.
+
+| Item | Reference value |
 | --- | --- |
-| Account | `mfreeman`, uid 1000, `/bin/bash`, `passwd -S` → `L`, groups: `mfreeman` only |
+| Account | `<user>`, `/bin/bash`, `passwd -S` → `L`, groups: its own primary group only |
 | Sudo | none (no grant; `sudo` is not installed) |
 | Drop-in | `/etc/ssh/sshd_config.d/60-serviceradar-user-ca.conf` (0644) |
-| CA trust | `/etc/ssh/serviceradar_user_ca.pub` (0644), fingerprint `SHA256:O/GMeaLmQ57/uygd+nF0lSXapNngTeQ4gXqhHtwPQfk` |
-| Principals | `/etc/ssh/auth_principals/mfreeman` (0644), one `srp_v1_…` line identical to dusk01's policy |
-| Effective policy | `sshd -T -C user=mfreeman,addr=127.0.0.1,host=localhost` shows the CA path, principals path, `pubkeyauthentication yes` |
+| CA trust | `/etc/ssh/serviceradar_user_ca.pub` (0644), fingerprint equal to the pinned `fleet_ssh_ca_fingerprint` |
+| Principals | `/etc/ssh/auth_principals/<user>` (0644), one `srp_v1_…` line per policy principal |
+| Effective policy | `sshd -T -C user=<user>,addr=127.0.0.1,host=localhost` shows the CA path, principals path, `pubkeyauthentication yes` |
 
-dusk01 carries the same CA and principals under its own IPA-managed paths;
-it is the principal-policy reference, not an enrollment target.
+A host that already receives the same CA and principals from a directory
+service under different paths is the principal-policy reference, not an
+enrollment target; keep it out of the limit.
 
 ## Secrets contract
 
@@ -61,13 +64,13 @@ real fleet and is never committed.
 ansible-playbook install-fleet-ssh-ca.yml -i inventory/fleet.ini \
   -e @/run/secrets/fleet-ssh-ca.yml --check
 
-# 1. Enroll one canary first (pve02 already matches; start with one peer).
+# 1. Enroll one canary first.
 ansible-playbook install-fleet-ssh-ca.yml -i inventory/fleet.ini \
   -e @/run/secrets/fleet-ssh-ca.yml --limit fleet-host-01
 
 # 2. Prove certificate login through a fresh connection before widening:
 ssh -o IdentitiesOnly=yes -i /path/to/signed-cert-key \
-  mfreeman@fleet-host-01 'whoami && sshd -V 2>&1 | head -1'
+  <user>@fleet-host-01 'whoami && sshd -V 2>&1 | head -1'
 
 # 3. Enroll the rest of the fleet (no moving-branch import in AWX: pin the
 #    reviewed commit per the immutable import checklist).
@@ -85,7 +88,7 @@ ssh-keygen -Hf /tmp/fleet-known-hosts
 
 ## Safety properties
 
-- Fail-closed platform gate: Debian 12 only (the pve02 reference).
+- Fail-closed platform gate: Debian 12 only (the verified reference platform).
 - Fixed paths: overrides are not variables, so the fleet cannot drift.
 - Locked account: `password: "!"` converges `passwd -S` to `L` even when the
   account already exists; supplementary groups are stripped; any existing
