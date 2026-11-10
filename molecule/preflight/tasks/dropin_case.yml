@@ -12,3 +12,4 @@
   vars:
     rejection_case: "{{ molecule_dropin_case.case }}"
     rejection_task: "{{ molecule_dropin_rule }}"
+    rejection_sources: ["{{ molecule_stock_dropin }}"]

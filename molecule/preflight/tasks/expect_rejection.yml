@@ -14,11 +14,17 @@
     - name: "Record the rejecting task: {{ rejection_case }}"
       ansible.builtin.set_fact:
         molecule_rejection_observed: "{{ ansible_failed_task.name }}"
+        molecule_rejection_sources: >-
+          {{ ansible_failed_result.results | default([]) |
+             selectattr('failed', 'defined') | selectattr('failed') |
+             map(attribute='item.source') | list }}
 
 - name: "Require the expected rejection: {{ rejection_case }}"
   ansible.builtin.assert:
     that:
       - molecule_rejection_observed is search(rejection_task, ignorecase=false)
+      - rejection_sources is not defined or molecule_rejection_sources == rejection_sources
     fail_msg: >-
       {{ rejection_case }}: expected the task "{{ rejection_task }}" to reject
-      the fixture, observed "{{ molecule_rejection_observed }}".
+      the fixture, observed "{{ molecule_rejection_observed }}"
+      for {{ molecule_rejection_sources | default([]) }}.

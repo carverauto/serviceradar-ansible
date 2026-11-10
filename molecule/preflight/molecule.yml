@@ -6,6 +6,12 @@ driver:
 # Each image is pinned by digest and used exactly as published. The driver's
 # default local rebuild cannot tag a digest reference and would replace the
 # reviewed image with an unreviewed derived one.
+# Host requirement: an Ubuntu 24.04 Docker host ships an AppArmor profile named
+# unix-chkpwd that also attaches to that helper inside these privileged
+# containers. It denies the capabilities the Rocky fixture's helper needs to
+# read its mode-0000 /etc/shadow, so sudo fails its PAM account check for
+# root. CI unloads that one host profile before the scenario; do the same on
+# such a host: sudo apparmor_parser -R /etc/apparmor.d/unix-chkpwd
 platforms:
   - name: sr-ra-ubuntu2204
     image: >-
@@ -63,10 +69,6 @@ provisioner:
       sr-ra-rocky9:
         expected_distribution: Rocky
         expected_version: "9"
-        # The Docker connection is already root. In this privileged systemd
-        # fixture sudo's PAM account check fails for root ("cannot retrieve
-        # authentication info"), so do not route root through sudo here.
-        ansible_become: false
 verifier:
   name: ansible
 scenario:

@@ -37,6 +37,19 @@ unknown include ordering, ambiguous CA/principal directives, and unsupported
 Match policy. Rocky SELinux labels are restored with `restorecon`. FIPS mode
 rejects Ed25519 CA keys.
 
+An unmanaged drop-in may not contain an `Include`, with one exception for the
+Rocky Linux 9 distribution layout. Preflight accepts the stock drop-in
+`/etc/ssh/sshd_config.d/50-redhat.conf` when its only `Include` is the single
+line `Include /etc/crypto-policies/back-ends/opensshserver.config` (surrounding
+whitespace is ignored). A second `Include`, a different or additional path,
+the same line in any other drop-in, or a `Match`, `TrustedUserCAKeys`, or
+`AuthorizedPrincipalsFile` line in any unmanaged drop-in is still rejected.
+Preflight then reads the included back-end, following its symlink, and fails
+closed unless it is a readable, root-owned regular file that only root can
+write and that contains no `Include`, `Match`, `TrustedUserCAKeys`, or
+`AuthorizedPrincipalsFile` directive. The file name, path, and count are fixed
+in the role and cannot be changed by inventory or extra vars.
+
 ## Public direct-mode input
 
 Direct wrappers use the operator controller's authorization model. Variables

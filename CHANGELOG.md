@@ -58,6 +58,16 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Accept a stock Rocky Linux 9 host in the SSH user-CA preflight. It rejected
+  every unmanaged drop-in containing an `Include`, which includes the
+  distribution's own `50-redhat.conf`. Preflight now tolerates exactly the line
+  `Include /etc/crypto-policies/back-ends/opensshserver.config` in exactly that
+  file, and reads the included back-end, failing closed if it is unreadable,
+  not a root-controlled regular file, or contains an `Include`, `Match`,
+  `TrustedUserCAKeys`, or `AuthorizedPrincipalsFile` directive. Every other
+  nested include and every Match or CA/principal directive is still rejected.
+- Make the Molecule preflight scenario runnable: use the digest-pinned fixture
+  images without a local rebuild and refresh the fixture package index.
 - Report a rate-limited or otherwise unusable agent release lookup with its
   cause and the pinned package inputs, rather than a dump of response headers.
 - Let the agent installers complete in check mode and report the planned

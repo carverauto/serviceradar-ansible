@@ -163,6 +163,22 @@ jobs:
           .venv/bin/ansible-galaxy collection install \
             --collections-path .collections \
             --requirements-file molecule/preflight/collections.yml
+      - name: Unload the host AppArmor profile that confines the fixtures' PAM helper
+        run: |
+          set -euo pipefail
+          # The runner's unix-chkpwd profile also attaches to that helper inside
+          # the privileged fixture containers and denies it dac_override and
+          # dac_read_search. The Rocky fixture keeps /etc/shadow at mode 0000,
+          # so sudo then fails its PAM account check for root. Unload only this
+          # profile, only on this single-job runner; the fixtures stay stock.
+          profiles=/sys/kernel/security/apparmor/profiles
+          if sudo grep -q '^unix-chkpwd ' "${profiles}"; then
+            sudo apparmor_parser -R /etc/apparmor.d/unix-chkpwd
+          fi
+          if sudo grep -q '^unix-chkpwd ' "${profiles}"; then
+            echo "the unix-chkpwd AppArmor profile is still loaded" >&2
+            exit 1
+          fi
       - name: Generate an ephemeral uncommitted test CA and run pinned Molecule matrix
         env:
           DOCKER_HOST: unix:///var/run/docker.sock

@@ -102,6 +102,15 @@
         loop_var: molecule_dropin_case
         label: "{{ molecule_dropin_case.case }}"
 
+    - name: Restore the stock drop-in
+      ansible.builtin.copy:
+        src: "{{ molecule_backup_dir }}/50-redhat.conf"
+        dest: "{{ molecule_stock_dropin }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
     - name: Add the stock Include line to a differently named drop-in
       ansible.builtin.copy:
         dest: /etc/ssh/sshd_config.d/40-site.conf
@@ -116,6 +125,7 @@
       vars:
         rejection_case: the stock Include line in a differently named drop-in
         rejection_task: "{{ molecule_dropin_rule }}"
+        rejection_sources: [/etc/ssh/sshd_config.d/40-site.conf]
 
     - name: Remove the differently named drop-in
       ansible.builtin.file:
@@ -174,15 +184,6 @@
       ansible.builtin.command:
         argv: [mv, "{{ molecule_backup_dir }}/opensshserver.config", "{{ molecule_backend }}"]
         creates: "{{ molecule_backend }}"
-
-    - name: Restore the stock drop-in
-      ansible.builtin.copy:
-        src: "{{ molecule_backup_dir }}/50-redhat.conf"
-        dest: "{{ molecule_stock_dropin }}"
-        remote_src: true
-        owner: root
-        group: root
-        mode: "0600"
 
     - name: Accept the restored stock fixture, proving each rejection came from its alteration
       ansible.builtin.include_role:

@@ -756,6 +756,7 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         'test "${#platform_images[@]}" -eq 4',
         "docker info",
         "--requirements-file molecule/preflight/collections.yml",
+        "sudo apparmor_parser -R /etc/apparmor.d/unix-chkpwd",
         'molecule test -s "${MOLECULE_SCENARIO}"',
     }
     missing = sorted(value for value in molecule_required if value not in molecule)
@@ -793,6 +794,23 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
             raise AssertionError(
                 f"Molecule platform must run its digest-pinned image unmodified: {platform['name']}"
             )
+    if "ansible_become" in scenario:
+        raise AssertionError(
+            "Molecule fixtures must escalate through sudo like a managed host"
+        )
+    verify = (ROOT / "molecule/preflight/verify.yml").read_text(encoding="utf-8")
+    rejection_cases = {
+        "a second Include in the stock drop-in",
+        "a different Include path in the stock drop-in",
+        "the stock Include line in a differently named drop-in",
+        "a CA directive in the crypto-policy back-end",
+        "a Match block in the crypto-policy back-end",
+        "a missing crypto-policy back-end",
+        "Accept the restored stock fixture",
+    }
+    missing = sorted(value for value in rejection_cases if value not in verify)
+    if missing:
+        raise AssertionError(f"stock Include allowance coverage missing: {missing}")
     if len(platforms) != 4:
         raise AssertionError("Molecule preflight platform matrix differs from the reviewed set")
     if "collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections" not in scenario:
