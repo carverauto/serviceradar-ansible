@@ -72,9 +72,12 @@
           delay: 5
           until: serviceradar_download is succeeded
 
+        # Check mode never downloads the package, so there is no file to hand
+        # to the package manager. The final report states the planned action.
         - name: Install agent package via apt
           ansible.builtin.apt:
             deb: "{{ serviceradar_package_download_path }}"
+          when: not ansible_check_mode
 
         # The apt module skips equal package versions even when their bytes differ.
         - name: Reinstall a changed pinned artifact at the same version

@@ -19,6 +19,14 @@
          | selectattr('stat.isreg', 'defined')
          | selectattr('stat.isreg', 'equalto', true) | list | length == 4 }}
 
+# The package provides the agent account and systemd unit. A check-mode run on
+# a host without the package has neither, so the tasks that need them wait for
+# the real run.
+- name: Record whether the package contents are on the host
+  ansible.builtin.set_fact:
+    serviceradar_package_present: >-
+      {{ not ansible_check_mode or serviceradar_installed_version != '' }}
+
 # The agent runtime directory holds the edge-record spool (edge-records/,
 # created by the agent on first start). The package creates it too; ensure it
 # here so hosts whose install step was skipped at the target version still
@@ -30,6 +38,7 @@
     owner: serviceradar
     group: serviceradar
     mode: "0755"
+  when: serviceradar_package_present
 
 - name: Enable the agent and start it only when enrollment assets exist
   ansible.builtin.systemd_service:
@@ -37,6 +46,7 @@
     enabled: true
     state: "{{ 'started' if serviceradar_enrollment_ready else omit }}"
     daemon_reload: true
+  when: serviceradar_package_present
 
 - name: Verify the enrolled agent service is active
   ansible.builtin.command:
@@ -54,6 +64,10 @@
   ansible.builtin.debug:
     msg:
       version: "{{ serviceradar_target_version }}"
+      package: >-
+        {{ 'reinstall' if serviceradar_reinstall_pinned_package else
+           ('install' if serviceradar_package_install_required else 'unchanged') }}
+      source: "{{ serviceradar_package_download_url }}"
       status: >-
         {{ 'planned' if ansible_check_mode else
            ('installed_service_active' if serviceradar_enrollment_ready else 'installed_awaiting_enrollment') }}

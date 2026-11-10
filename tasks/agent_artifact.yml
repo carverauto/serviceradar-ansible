@@ -26,28 +26,86 @@
       and an explicit serviceradar_version matching the package version.
   when: serviceradar_use_pinned_package
 
-- name: Resolve the requested GitHub release
+- name: Resolve release endpoint
+  ansible.builtin.set_fact:
+    serviceradar_release_url: >-
+      {{ serviceradar_api_base }}/releases/{{
+        'tags/v' ~ (serviceradar_version | regex_replace('^v', ''))
+        if serviceradar_version is defined
+        else 'latest' }}
+  when: not serviceradar_use_pinned_package
+
+# Release metadata does not depend on the managed host, so the controller asks
+# once per distinct release for the whole batch. Managed hosts behind a shared
+# address would otherwise each spend the same anonymous GitHub API allowance.
+# The loop is empty, and no request is made, when every host is pinned.
+- name: Fetch release metadata from GitHub once on the controller
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    return_content: true
+    validate_certs: "{{ serviceradar_validate_certs }}"
+  loop: >-
+    {{ ansible_play_batch | map('extract', hostvars)
+       | selectattr('serviceradar_use_pinned_package', 'defined')
+       | rejectattr('serviceradar_use_pinned_package')
+       | map(attribute='serviceradar_release_url') | unique | list }}
+  register: serviceradar_release_lookup
+  # Every response is classified below so that each failure names its cause.
+  # Only a transport error or a server error is worth asking again.
+  failed_when: false
+  retries: 3
+  delay: 5
+  until: >-
+    (serviceradar_release_lookup.status | default(-1) >= 200 and
+     serviceradar_release_lookup.status | default(-1) < 500) or
+    serviceradar_release_lookup.attempts | default(3) >= 3
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false
+
+- name: Require usable release metadata
   when: not serviceradar_use_pinned_package
   block:
-    - name: Resolve release endpoint
+    - name: Select the release metadata requested for this host
       ansible.builtin.set_fact:
-        serviceradar_release_url: >-
-          {{ serviceradar_api_base }}/releases/{{
-            'tags/v' ~ (serviceradar_version | regex_replace('^v', ''))
-            if serviceradar_version is defined
-            else 'latest' }}
+        serviceradar_release: >-
+          {{ serviceradar_release_lookup.results
+             | selectattr('item', 'equalto', serviceradar_release_url) | first }}
 
-    - name: Fetch release metadata from GitHub
-      ansible.builtin.uri:
-        url: "{{ serviceradar_release_url }}"
-        return_content: true
-        validate_certs: "{{ serviceradar_validate_certs }}"
-        status_code: [200, 404]
-      register: serviceradar_release
-      retries: 3
-      delay: 5
-      until: serviceradar_release.status | default(0) in [200, 404]
-      check_mode: false
+    - name: Require a GitHub API response that is not rate limited
+      ansible.builtin.assert:
+        that:
+          - >-
+            serviceradar_release.status not in [403, 429] or
+            (serviceradar_release.x_ratelimit_remaining | default('') | string != '0' and
+             serviceradar_release.retry_after is not defined)
+        fail_msg: >-
+          GitHub rate limited the release lookup from the Ansible controller
+          (HTTP {{ serviceradar_release.status }} for {{ serviceradar_release_url }};
+          requests remaining {{ serviceradar_release.x_ratelimit_remaining | default('not reported') }};
+          limit resets at {{ '%Y-%m-%d %H:%M:%S UTC'
+             | strftime(serviceradar_release.x_ratelimit_reset, utc=true)
+             if serviceradar_release.x_ratelimit_reset | default('') | string is match('^[0-9]+$')
+             else 'an unreported time' }}).
+          Anonymous GitHub API requests are limited per source address and the
+          controller shares its address with other clients. Retry after the
+          reset, or skip release discovery by supplying
+          serviceradar_agent_package_url, serviceradar_agent_package_sha256,
+          and serviceradar_version.
+
+    - name: Require a definitive answer from the GitHub release API
+      ansible.builtin.assert:
+        that:
+          - serviceradar_release.status in [200, 404]
+        fail_msg: >-
+          The release lookup from the Ansible controller did not get a usable
+          answer from {{ serviceradar_release_url }}
+          (HTTP status {{ serviceradar_release.status }}:
+          {{ serviceradar_release.msg | default('no detail reported') }}).
+          Check that the controller can reach the GitHub API, or skip release
+          discovery by supplying serviceradar_agent_package_url,
+          serviceradar_agent_package_sha256, and serviceradar_version.
 
     - name: Require a published GitHub release with package assets
       ansible.builtin.assert:

@@ -72,10 +72,13 @@
           delay: 5
           until: serviceradar_download is succeeded
 
+        # Check mode never downloads the package, so there is no file to hand
+        # to the package manager. The final report states the planned action.
         - name: Install agent package via dnf/yum
           ansible.builtin.package:
             name: "{{ serviceradar_package_download_path }}"
             state: present
+          when: not ansible_check_mode
 
         # Package modules skip an already-installed version; reinstall the exact pin.
         - name: Reinstall a changed pinned artifact at the same version

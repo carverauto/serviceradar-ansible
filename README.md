@@ -187,10 +187,21 @@ pin, an invalid checksum, or a missing version fails before any download.
 
 When both pinned artifact inputs are omitted, the installers resolve
 `https://api.github.com/repos/carverauto/serviceradar/releases/latest`, or
-`/releases/tags/v<version>` when `serviceradar_version` is provided. Targets
-need access to the GitHub API and the returned package download URLs.
-A missing release or missing/ambiguous package fails with instructions to use
-the pinned package inputs.
+`/releases/tags/v<version>` when `serviceradar_version` is provided.
+
+The Ansible controller (the AWX execution environment) makes that request,
+without privilege escalation, once per distinct release for each batch of
+hosts in the play. Every host then selects the package for its own
+architecture from the same answer. The controller therefore needs access to
+the GitHub API, and managed hosts need access only to the returned package
+download URLs. The request is anonymous, so no API token is stored or passed.
+
+GitHub limits anonymous API requests per source address. A rate-limited
+lookup fails before any host is changed, reports the HTTP status and the time
+the limit resets, and is not retried. Any other unusable answer reports its
+HTTP status; only transport and server errors are retried. A missing release
+or missing/ambiguous package fails as well. Each of these failures points to
+the pinned package inputs, which make no API request.
 
 Debian asset names must match `serviceradar-agent_<version>_<architecture>.deb`.
 RPM names must start with `serviceradar-agent-<version>` and end in
@@ -221,6 +232,15 @@ GitHub release discovery remains version-based. The installers check the
 installed version before recording a pin and verify that an
 enrolled agent's service is active. A successful service check does not prove
 connectivity; verify a fresh agent heartbeat in ServiceRadar after deployment.
+
+### Check mode
+
+Both installers support `--check`. A dry run resolves the artifact, compares it
+with the installed package, probes the package URL without downloading it, and
+changes nothing. Its final report has `status: planned`, a `package` action of
+`install`, `reinstall`, or `unchanged`, and the package `source`. On a host
+that does not have the package yet, the steps that need the packaged account
+and systemd unit are skipped until the real run.
 
 ### Separate enrollment
 
