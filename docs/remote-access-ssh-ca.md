@@ -50,6 +50,11 @@ write and that contains no `Include`, `Match`, `TrustedUserCAKeys`, or
 `AuthorizedPrincipalsFile` directive. The file name, path, and count are fixed
 in the role and cannot be changed by inventory or extra vars.
 
+These rules recognise every keyword form sshd accepts: `Keyword value`,
+`Keyword=value`, `Keyword = value`, and a double-quoted keyword or argument.
+The stock crypto-policy allowance is literal, so only the whitespace form of
+that exact line is accepted.
+
 ## Public direct-mode input
 
 Direct wrappers use the operator controller's authorization model. Variables

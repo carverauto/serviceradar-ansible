@@ -66,6 +66,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   not a root-controlled regular file, or contains an `Include`, `Match`,
   `TrustedUserCAKeys`, or `AuthorizedPrincipalsFile` directive. Every other
   nested include and every Match or CA/principal directive is still rejected.
+- Reject sshd keywords written with `=` or quotes in the SSH user-CA preflight.
+  The rules that refuse `Include`, `Match`, `TrustedUserCAKeys` and
+  `AuthorizedPrincipalsFile` in the main configuration and in unmanaged
+  drop-ins required whitespace after the keyword, but sshd also accepts
+  `Keyword=value`, `Keyword = value` and a quoted keyword. Those forms are now
+  rejected like the whitespace form. An effective `TrustedUserCAKeys` path
+  containing a space is no longer read as unset.
 - Make the Molecule preflight scenario runnable: use the digest-pinned fixture
   images without a local rebuild and refresh the fixture package index.
 - Report a rate-limited or otherwise unusable agent release lookup with its

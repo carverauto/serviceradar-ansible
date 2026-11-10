@@ -1,62 +1,4 @@
 ---
-# TEMPORARY PROBE (removed before merge): record which keyword/argument
-# separator forms each fixture's real sshd accepts in a drop-in.
-- name: Probe sshd keyword separator forms
-  hosts: all
-  become: true
-  gather_facts: false
-  tasks:
-    - name: Run each form through sshd -t and sshd -T
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          set -o pipefail
-          d=/run/sr-probe
-          rm -rf /run/sr-probe; mkdir -p "$d/d"
-          printf 'Include %s/d/*.conf\n' "$d" > "$d/sshd_config"
-          printf 'TrustedUserCAKeys %s/included-ca.pub\n' "$d" > "$d/inc.conf"
-          /usr/sbin/sshd -V 2>&1 | head -n 1
-          probe() {
-            printf '%s\n' "$2" > "$d/d/50-probe.conf"
-            if [ -n "${3:-}" ]; then printf '%s\n' "$3" >> "$d/d/50-probe.conf"; fi
-            /usr/sbin/sshd -t -f "$d/sshd_config" >/dev/null 2>"$d/err"; rc=$?
-            ctx=user=srtest,host=localhost,addr=127.0.0.1
-            eff=$(/usr/sbin/sshd -T -f "$d/sshd_config" -C "$ctx" 2>/dev/null |
-                  grep -E '^(trustedusercakeys|authorizedprincipalsfile) ' | tr '\n' ';')
-            err=$(head -c 110 "$d/err" | tr '\n' ' ')
-            printf 'FORM %-22s rc=%s effective=[%s] err=[%s]\n' "$1" "$rc" "$eff" "$err"
-          }
-          probe include-space     "Include $d/inc.conf"
-          probe include-equals    "Include=$d/inc.conf"
-          probe include-sp-eq-sp  "Include = $d/inc.conf"
-          probe include-quoted    "Include \"$d/inc.conf\""
-          probe include-noquotesp "Include\"$d/inc.conf\""
-          probe include-dbl-eq    "Include==$d/inc.conf"
-          probe kw-quoted-include "\"Include\" $d/inc.conf"
-          probe ca-equals         "TrustedUserCAKeys=$d/ca.pub"
-          probe ca-sp-eq-sp       "TrustedUserCAKeys = $d/ca.pub"
-          probe ca-quoted         "TrustedUserCAKeys \"$d/ca.pub\""
-          probe ca-eq-quoted      "TrustedUserCAKeys=\"$d/ca.pub\""
-          probe ca-noquotesp      "TrustedUserCAKeys\"$d/ca.pub\""
-          probe kw-quoted-ca      "\"TrustedUserCAKeys\" $d/ca.pub"
-          probe ca-quoted-space   "TrustedUserCAKeys \"$d/ca with space.pub\""
-          probe principals-equals "AuthorizedPrincipalsFile=$d/p/%u"
-          probe principals-sp-eq  "AuthorizedPrincipalsFile = $d/p/%u"
-          probe principals-quoted "AuthorizedPrincipalsFile \"$d/p/%u\""
-          probe match-space       "Match User srtest" "TrustedUserCAKeys $d/match-ca.pub"
-          probe match-equals      "Match=User srtest" "TrustedUserCAKeys $d/match-ca.pub"
-          probe match-sp-eq-sp    "Match = User srtest" "TrustedUserCAKeys $d/match-ca.pub"
-          probe match-user-equals "Match User=srtest" "TrustedUserCAKeys $d/match-ca.pub"
-          probe kw-quoted-match   "\"Match\" User srtest" "TrustedUserCAKeys $d/match-ca.pub"
-          rm -rf /run/sr-probe
-          exit 0
-      register: molecule_separator_probe
-      changed_when: false
-
-    - name: Show the probe results
-      ansible.builtin.debug:
-        var: molecule_separator_probe.stdout_lines
-
 - name: Verify preflight made no role-owned host changes
   hosts: all
   become: true
@@ -218,6 +160,9 @@
           line: Include "/etc/ssh/site-policy.conf"
         - case: an equals-form Match in the main sshd configuration
           line: Match=User srtest
+        - case: an unmanaged CA path containing a space in the main sshd configuration
+          line: TrustedUserCAKeys "/etc/ssh/site ca.pub"
+          rule: Validate existing global CA ownership
       loop_control:
         loop_var: molecule_mainconfig_case
         label: "{{ molecule_mainconfig_case.case }}"

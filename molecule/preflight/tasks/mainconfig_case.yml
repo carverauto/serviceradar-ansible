@@ -12,4 +12,4 @@
   ansible.builtin.include_tasks: expect_rejection.yml
   vars:
     rejection_case: "{{ molecule_mainconfig_case.case }}"
-    rejection_task: "{{ molecule_mainconfig_rule }}"
+    rejection_task: "{{ molecule_mainconfig_case.rule | default(molecule_mainconfig_rule) }}"
