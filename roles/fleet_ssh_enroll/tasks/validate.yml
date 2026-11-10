@@ -5,8 +5,8 @@
       - ansible_facts.distribution == 'Debian'
       - ansible_facts.distribution_major_version == '12'
     fail_msg: >-
-      Fleet SSH enrollment is verified only on Debian 12 (the pve02
-      reference). Refusing to change {{ inventory_hostname }}.
+      Fleet SSH enrollment is verified only on Debian 12 (the
+      reference platform). Refusing to change {{ inventory_hostname }}.
 
 - name: Require per-run public CA material and principals
   ansible.builtin.assert:
@@ -35,7 +35,7 @@
     that:
       - item is match('^srp_v1_[A-Za-z0-9_-]{20,96}$')
     fail_msg: >-
-      Principals must be opaque dusk01-policy tokens (`srp_v1_` plus 20-96
+      Principals must be opaque policy tokens (`srp_v1_` plus 20-96
       base64url characters), never account names or key options.
   no_log: true
   loop: "{{ fleet_ssh_principals }}"

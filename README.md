@@ -131,9 +131,9 @@ against the exact canonical device limit. See the
 
 ## Fleet SSH-CA enrollment (serviceradar#4376)
 
-`install-fleet-ssh-ca.yml` replicates the verified pve02 fix to the rest of
-the fleet: a locked, privilege-free POSIX user plus OpenSSH user-CA trust
-with dusk01-policy principals on Debian 12 hosts. `sshd -t` and
+`install-fleet-ssh-ca.yml` converges every fleet host on one verified
+reference layout: a locked, privilege-free POSIX user plus OpenSSH user-CA
+trust with opaque policy principals on Debian 12 hosts. `sshd -t` and
 account-aware `sshd -T -C` proofs gate an `ssh` reload (never a restart).
 `install-fleet-ssh-known-hosts.yml` collects fleet host keys into a fragment
 for the webconsole `knownhosts` verifier. Secrets and real inventory travel

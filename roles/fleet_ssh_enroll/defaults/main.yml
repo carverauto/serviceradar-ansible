@@ -1,10 +1,10 @@
 ---
 # Fleet SSH-CA enrollment defaults.
 #
-# These mirror the manually verified pve02 fix for
+# These mirror the manually verified reference layout for
 # https://github.com/carverauto/serviceradar/issues/4376 : a locked,
 # privilege-free POSIX account plus OpenSSH user-CA trust whose principals
-# match the dusk01 reference policy. The public tree must never contain real
+# match the reference principal policy. The public tree must never contain real
 # key material, principals, fingerprints, hostnames, or addresses: supply the
 # three required values per run from one of
 #
@@ -18,7 +18,7 @@
 # Environment defaults keep `env` as a supported secret route; every required
 # value is asserted non-empty before any managed host is changed.
 
-# POSIX account created on each fleet host. pve02 uses `mfreeman`.
+# POSIX account created on each fleet host.
 fleet_ssh_user: mfreeman
 
 # Login shell for the enrollment account. Must be a usable (non-nologin) shell.
@@ -34,14 +34,14 @@ fleet_ssh_ca_public_key: "{{ lookup('ansible.builtin.env', 'FLEET_SSH_CA_PUBLIC_
 fleet_ssh_ca_fingerprint: "{{ lookup('ansible.builtin.env', 'FLEET_SSH_CA_FINGERPRINT') }}"
 
 # Certificate principals written to the per-account principals file. These must
-# match the dusk01 reference policy. Comma-separated env FLEET_SSH_PRINCIPALS
+# match the reference principal policy. Comma-separated env FLEET_SSH_PRINCIPALS
 # or an extra-vars list. Required: at least one `srp_v1_` opaque principal.
 fleet_ssh_principals: >-
   {{ lookup('ansible.builtin.env', 'FLEET_SSH_PRINCIPALS').split(',')
   if lookup('ansible.builtin.env', 'FLEET_SSH_PRINCIPALS') | length > 0
   else [] }}
 
-# Fixed ownership boundary, byte-identical to the verified pve02 layout.
+# Fixed ownership boundary, byte-identical to the verified reference layout.
 # These paths are intentionally not variable: the fleet must converge on one
 # layout so the ServiceRadar webconsole policy stays uniform.
 fleet_ssh_ca_path: /etc/ssh/serviceradar_user_ca.pub

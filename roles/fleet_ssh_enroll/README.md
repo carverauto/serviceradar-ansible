@@ -1,6 +1,6 @@
 # Fleet SSH enrollment role
 
-Converges one Debian 12 fleet host on the manually verified pve02 layout for
+Converges one Debian 12 fleet host on the manually verified reference layout for
 [serviceradar#4376](https://github.com/carverauto/serviceradar/issues/4376):
 
 - POSIX account `fleet_ssh_user` (default `mfreeman`) with `/bin/bash`, a
@@ -9,7 +9,7 @@ Converges one Debian 12 fleet host on the manually verified pve02 layout for
   never creates a grant.
 - Public user-CA trust at `/etc/ssh/serviceradar_user_ca.pub` (0644).
 - Per-account principals at `/etc/ssh/auth_principals/<user>` (0644)
-  matching the dusk01 principal policy.
+  matching the reference principal policy.
 - `sshd` drop-in at
   `/etc/ssh/sshd_config.d/60-serviceradar-user-ca.conf` carrying
   `TrustedUserCAKeys` and `AuthorizedPrincipalsFile`.
@@ -22,7 +22,7 @@ Converges one Debian 12 fleet host on the manually verified pve02 layout for
 This role is deliberately separate from `remote_access_ssh_ca`: that
 collection path fails closed on hypervisors and manages a transactional
 overlap/retire lifecycle, while Proxmox VE fleet nodes need the exact static
-pve02 layout. It is also separate from the host-agent installer and the demo
+reference layout. It is also separate from the host-agent installer and the demo
 Settings page.
 
 Only Debian 12 is supported. The CA private key, signed certificates,
