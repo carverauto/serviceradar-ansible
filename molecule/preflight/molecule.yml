@@ -63,6 +63,10 @@ provisioner:
       sr-ra-rocky9:
         expected_distribution: Rocky
         expected_version: "9"
+        # The Docker connection is already root. In this privileged systemd
+        # fixture sudo's PAM account check fails for root ("cannot retrieve
+        # authentication info"), so do not route root through sudo here.
+        ansible_become: false
 verifier:
   name: ansible
 scenario:
