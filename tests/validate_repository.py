@@ -784,6 +784,17 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
             f"Molecule Docker driver collections are not exactly pinned: {pinned}"
         )
     scenario = (ROOT / "molecule/preflight/molecule.yml").read_text(encoding="utf-8")
+    platforms = load_unique_yaml(ROOT / "molecule/preflight/molecule.yml")["platforms"]
+    for platform in platforms:
+        if (
+            not re.fullmatch(r"docker\.io/[a-z0-9/_.-]+@sha256:[0-9a-f]{64}", platform["image"])
+            or platform.get("pre_build_image") is not True
+        ):
+            raise AssertionError(
+                f"Molecule platform must run its digest-pinned image unmodified: {platform['name']}"
+            )
+    if len(platforms) != 4:
+        raise AssertionError("Molecule preflight platform matrix differs from the reviewed set")
     if "collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections" not in scenario:
         raise AssertionError(
             "Molecule preflight scenario must resolve only the reviewed collections"

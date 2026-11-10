@@ -3,10 +3,14 @@ dependency:
   name: galaxy
 driver:
   name: docker
+# Each image is pinned by digest and used exactly as published. The driver's
+# default local rebuild cannot tag a digest reference and would replace the
+# reviewed image with an unreviewed derived one.
 platforms:
   - name: sr-ra-ubuntu2204
     image: >-
       docker.io/geerlingguy/docker-ubuntu2204-ansible@sha256:114c729fe6540653b432bb8102bc760eb83a9569f95206f077ad74cb7e7361ee
+    pre_build_image: true
     command: /sbin/init
     privileged: true
     cgroupns_mode: host
@@ -15,6 +19,7 @@ platforms:
   - name: sr-ra-ubuntu2404
     image: >-
       docker.io/geerlingguy/docker-ubuntu2404-ansible@sha256:c446997f67e9f43bb427180166ce1db7ad4312f7065242456c57c937cb9cdd5b
+    pre_build_image: true
     command: /sbin/init
     privileged: true
     cgroupns_mode: host
@@ -23,6 +28,7 @@ platforms:
   - name: sr-ra-debian12
     image: >-
       docker.io/geerlingguy/docker-debian12-ansible@sha256:1b1881bfc5f025980765a90e76ecaebd61f53248eb0f3f23bc027da1b201400e
+    pre_build_image: true
     command: /sbin/init
     privileged: true
     cgroupns_mode: host
@@ -31,6 +37,7 @@ platforms:
   - name: sr-ra-rocky9
     image: >-
       docker.io/geerlingguy/docker-rockylinux9-ansible@sha256:12e0bf8e95037b84af695b0c4ae6a552e3100c69793ee02f95870b4e02bd22ff
+    pre_build_image: true
     command: /sbin/init
     privileged: true
     cgroupns_mode: host
