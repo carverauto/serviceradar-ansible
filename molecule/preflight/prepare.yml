@@ -1,4 +1,36 @@
 ---
+# TEMPORARY DIAGNOSTIC (removed before merge): find why sudo's PAM account
+# check fails for root in the privileged systemd Rocky fixture.
+- name: Diagnose the Rocky fixture sudo PAM account failure
+  hosts: sr-ra-rocky9
+  gather_facts: false
+  tasks:
+    - name: Collect sudo, PAM, shadow, and kernel-denial evidence
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -o pipefail
+          exec 2>&1
+          echo "== id"; id; grep -E '^Cap(Eff|Bnd)' /proc/self/status
+          echo "== lsm label"; cat /proc/self/attr/current; echo
+          echo "== system state"; systemctl is-system-running
+          echo "== shadow"; ls -ln /etc/shadow; rpm -q pam sudo
+          echo "== selinux"; ls /sys/fs/selinux 2>&1 | head -3; grep selinux /proc/filesystems
+          echo "== sudo before"; sudo -n true; echo "rc=$?"
+          echo "== unix_chkpwd"; /usr/sbin/unix_chkpwd root chkexpiry; echo "rc=$?"
+          echo "== journal"; journalctl -b --no-pager -n 200 | grep -Ei 'pam|sudo|unix_chkpwd' | tail -n 15
+          echo "== dmesg denials"; dmesg | grep -Ei 'apparmor|audit' | tail -n 12
+          echo "== sudo with owner-readable shadow"
+          chmod 0400 /etc/shadow; sudo -n true; echo "rc=$?"; chmod 0000 /etc/shadow
+          echo "== sudo after restore"; sudo -n true; echo "rc=$?"
+          exit 0
+      register: molecule_sudo_diagnostic
+      changed_when: false
+
+    - name: Show the evidence
+      ansible.builtin.debug:
+        var: molecule_sudo_diagnostic.stdout_lines
+
 - name: Prepare real systemd and sshd fixtures
   hosts: all
   become: true

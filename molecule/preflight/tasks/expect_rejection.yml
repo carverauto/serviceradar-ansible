@@ -1,0 +1,24 @@
+---
+# Run the read-only preflight against a deliberately altered fixture and
+# require that the named rule, and no other, rejects it.
+- name: "Run preflight expecting rejection: {{ rejection_case }}"
+  block:
+    - name: "Run the role preflight: {{ rejection_case }}"
+      ansible.builtin.include_role:
+        name: remote_access_ssh_ca
+
+    - name: "Record that preflight accepted the fixture: {{ rejection_case }}"
+      ansible.builtin.set_fact:
+        molecule_rejection_observed: accepted
+  rescue:
+    - name: "Record the rejecting task: {{ rejection_case }}"
+      ansible.builtin.set_fact:
+        molecule_rejection_observed: "{{ ansible_failed_task.name }}"
+
+- name: "Require the expected rejection: {{ rejection_case }}"
+  ansible.builtin.assert:
+    that:
+      - molecule_rejection_observed is search(rejection_task, ignorecase=false)
+    fail_msg: >-
+      {{ rejection_case }}: expected the task "{{ rejection_task }}" to reject
+      the fixture, observed "{{ molecule_rejection_observed }}".

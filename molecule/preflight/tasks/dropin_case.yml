@@ -1,0 +1,14 @@
+---
+- name: "Alter the stock drop-in: {{ molecule_dropin_case.case }}"
+  ansible.builtin.copy:
+    dest: "{{ molecule_stock_dropin }}"
+    content: "{{ molecule_dropin_case.content }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: "Expect rejection: {{ molecule_dropin_case.case }}"
+  ansible.builtin.include_tasks: expect_rejection.yml
+  vars:
+    rejection_case: "{{ molecule_dropin_case.case }}"
+    rejection_task: "{{ molecule_dropin_rule }}"

@@ -258,19 +258,86 @@
   register: sr_ra_unmanaged_dropin_content
   changed_when: false
 
-- name: Reject ambiguous Match or CA directives in unmanaged drop-ins
+# One Include is tolerated in unmanaged drop-ins: the distribution-stock
+# system-wide crypto-policy line in the distribution-stock drop-in. The file
+# name, the path, and the count are fixed here and are not role variables.
+- name: Apply the unmanaged drop-in directive policy
+  vars:
+    sr_ra_stock_dropin: /etc/ssh/sshd_config.d/50-redhat.conf
+    sr_ra_stock_include: >-
+      (?m)^[ \t]*(?i:Include)[ \t]+/etc/crypto-policies/back-ends/opensshserver\.config[ \t]*$
+  block:
+    - name: Reject ambiguous Match or CA directives in unmanaged drop-ins
+      ansible.builtin.assert:
+        that:
+          - >-
+            sr_ra_dropin_text |
+            regex_search('(?im)^\\s*(Match|TrustedUserCAKeys|AuthorizedPrincipalsFile)\\s+') is none
+          - sr_ra_dropin_stock_includes | int <= 1
+          - >-
+            (sr_ra_dropin_text | regex_findall('(?im)^\\s*Include\\s+') | length) ==
+            (sr_ra_dropin_stock_includes | int)
+        fail_msg: >-
+          {{ item.source }} contains CA/principal/Match policy that this role will
+          not replace or merge implicitly.
+      vars:
+        sr_ra_dropin_text: "{{ item.content | b64decode }}"
+        sr_ra_dropin_stock_includes: >-
+          {{
+            (sr_ra_dropin_text | regex_findall(sr_ra_stock_include) | length)
+            if item.source == sr_ra_stock_dropin else 0
+          }}
+      loop: "{{ sr_ra_unmanaged_dropin_content.results | default([]) }}"
+      loop_control:
+        label: "{{ item.source | default(item.item.path) }}"
+      when:
+        - not (item.skipped | default(false))
+        - item.content is defined
+
+    - name: Detect the stock system-wide crypto-policy Include
+      ansible.builtin.set_fact:
+        sr_ra_stock_crypto_policy_included: >-
+          {{
+            sr_ra_unmanaged_dropin_content.results | default([]) |
+            selectattr('content', 'defined') |
+            selectattr('source', 'equalto', sr_ra_stock_dropin) |
+            map(attribute='content') | map('b64decode') |
+            select('search', sr_ra_stock_include) | list | length > 0
+          }}
+
+# The tolerated Include is not trusted blindly: its target must be readable,
+# root-controlled, and free of the directives rejected in drop-ins. An
+# unreadable or missing target fails the slurp and therefore the preflight.
+- name: Inspect the included system-wide crypto-policy back-end
+  ansible.builtin.stat:
+    path: /etc/crypto-policies/back-ends/opensshserver.config
+    follow: true
+  register: sr_ra_crypto_policy_backend
+  when: sr_ra_stock_crypto_policy_included | bool
+
+- name: Read the included system-wide crypto-policy back-end
+  ansible.builtin.slurp:
+    src: /etc/crypto-policies/back-ends/opensshserver.config
+  register: sr_ra_crypto_policy_backend_content
+  changed_when: false
+  when: sr_ra_stock_crypto_policy_included | bool
+
+- name: Reject Include, Match, or CA directives in the crypto-policy back-end
   ansible.builtin.assert:
     that:
+      - sr_ra_crypto_policy_backend.stat.exists
+      - sr_ra_crypto_policy_backend.stat.isreg
+      - sr_ra_crypto_policy_backend.stat.uid == 0
+      - not sr_ra_crypto_policy_backend.stat.wgrp
+      - not sr_ra_crypto_policy_backend.stat.woth
       - >-
-        item.content | b64decode |
+        sr_ra_crypto_policy_backend_content.content | b64decode |
         regex_search('(?im)^\\s*(Include|Match|TrustedUserCAKeys|AuthorizedPrincipalsFile)\\s+') is none
     fail_msg: >-
-      {{ item.source }} contains CA/principal/Match policy that this role will
-      not replace or merge implicitly.
-  loop: "{{ sr_ra_unmanaged_dropin_content.results | default([]) }}"
-  when:
-    - not (item.skipped | default(false))
-    - item.content is defined
+      /etc/crypto-policies/back-ends/opensshserver.config must be a root-owned
+      regular file, writable only by root, with no Include, Match, or
+      CA/principal directive.
+  when: sr_ra_stock_crypto_policy_included | bool
 
 - name: Validate baseline sshd syntax
   ansible.builtin.command:

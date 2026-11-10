@@ -25,3 +25,165 @@
       ansible.builtin.command:
         argv: [/usr/sbin/sshd, -t, -f, /etc/ssh/sshd_config]
       changed_when: false
+
+- name: Prove the stock crypto-policy Include allowance stays narrow
+  hosts: sr-ra-rocky9
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_stock_dropin: /etc/ssh/sshd_config.d/50-redhat.conf
+    molecule_stock_include: Include /etc/crypto-policies/back-ends/opensshserver.config
+    molecule_backend: /etc/crypto-policies/back-ends/opensshserver.config
+    molecule_backup_dir: /run/serviceradar-test-preflight
+    molecule_dropin_rule: Reject ambiguous Match or CA directives in unmanaged drop-ins
+    molecule_backend_read: Read the included system-wide crypto-policy back-end
+    molecule_backend_rule: Reject Include, Match, or CA directives in the crypto-policy back-end
+  tasks:
+    - name: Require the unmodified fixture to carry the stock Include exactly once
+      ansible.builtin.command:
+        argv: [grep, -c, -x, "{{ molecule_stock_include }}", "{{ molecule_stock_dropin }}"]
+      register: molecule_stock_include_count
+      changed_when: false
+      failed_when: molecule_stock_include_count.stdout != '1'
+
+    - name: Require the stock back-end to be the distribution symlink
+      ansible.builtin.stat:
+        path: "{{ molecule_backend }}"
+        follow: false
+      register: molecule_backend_link
+      failed_when: not (molecule_backend_link.stat.islnk | default(false))
+
+    - name: Create a private backup directory inside the disposable fixture
+      ansible.builtin.file:
+        path: "{{ molecule_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Back up the stock drop-in
+      ansible.builtin.copy:
+        src: "{{ molecule_stock_dropin }}"
+        dest: "{{ molecule_backup_dir }}/50-redhat.conf"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Reject each altered stock drop-in
+      ansible.builtin.include_tasks: tasks/dropin_case.yml
+      loop:
+        - case: a second Include in the stock drop-in
+          content: |
+            {{ molecule_stock_include }}
+            Include /etc/ssh/site-policy.conf
+        - case: the stock Include repeated in the stock drop-in
+          content: |
+            {{ molecule_stock_include }}
+            {{ molecule_stock_include }}
+        - case: a different Include path in the stock drop-in
+          content: |
+            Include /etc/crypto-policies/back-ends/openssh.config
+        - case: a second path on the stock Include line
+          content: |
+            {{ molecule_stock_include }} /etc/ssh/site-policy.conf
+        - case: a CA directive beside the stock Include
+          content: |
+            {{ molecule_stock_include }}
+            TrustedUserCAKeys /etc/ssh/site-ca.pub
+        - case: a Match block beside the stock Include
+          content: |
+            {{ molecule_stock_include }}
+            Match User srtest
+                X11Forwarding no
+      loop_control:
+        loop_var: molecule_dropin_case
+        label: "{{ molecule_dropin_case.case }}"
+
+    - name: Add the stock Include line to a differently named drop-in
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/40-site.conf
+        content: |
+          {{ molecule_stock_include }}
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Reject the stock Include line outside the stock drop-in
+      ansible.builtin.include_tasks: tasks/expect_rejection.yml
+      vars:
+        rejection_case: the stock Include line in a differently named drop-in
+        rejection_task: "{{ molecule_dropin_rule }}"
+
+    - name: Remove the differently named drop-in
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/40-site.conf
+        state: absent
+
+    - name: Move the stock back-end symlink aside
+      ansible.builtin.command:
+        argv: [mv, "{{ molecule_backend }}", "{{ molecule_backup_dir }}/opensshserver.config"]
+        creates: "{{ molecule_backup_dir }}/opensshserver.config"
+
+    - name: Reject a missing crypto-policy back-end
+      ansible.builtin.include_tasks: tasks/expect_rejection.yml
+      vars:
+        rejection_case: a missing crypto-policy back-end
+        rejection_task: "{{ molecule_backend_read }}"
+
+    - name: Reject each altered crypto-policy back-end
+      ansible.builtin.include_tasks: tasks/backend_case.yml
+      loop:
+        - case: a CA directive in the crypto-policy back-end
+          content: |
+            Ciphers aes256-gcm@openssh.com
+            TrustedUserCAKeys /etc/ssh/site-ca.pub
+          mode: "0644"
+        - case: a principals directive in the crypto-policy back-end
+          content: |
+            Ciphers aes256-gcm@openssh.com
+            AuthorizedPrincipalsFile /etc/ssh/site-principals/%u
+          mode: "0644"
+        - case: a Match block in the crypto-policy back-end
+          content: |
+            Ciphers aes256-gcm@openssh.com
+            Match User srtest
+                X11Forwarding no
+          mode: "0644"
+        - case: a nested Include in the crypto-policy back-end
+          content: |
+            Ciphers aes256-gcm@openssh.com
+            Include /etc/ssh/site-policy.conf
+          mode: "0644"
+        - case: a group-writable crypto-policy back-end
+          content: |
+            Ciphers aes256-gcm@openssh.com
+          mode: "0664"
+      loop_control:
+        loop_var: molecule_backend_case
+        label: "{{ molecule_backend_case.case }}"
+
+    - name: Remove the altered crypto-policy back-end
+      ansible.builtin.file:
+        path: "{{ molecule_backend }}"
+        state: absent
+
+    - name: Restore the stock back-end symlink
+      ansible.builtin.command:
+        argv: [mv, "{{ molecule_backup_dir }}/opensshserver.config", "{{ molecule_backend }}"]
+        creates: "{{ molecule_backend }}"
+
+    - name: Restore the stock drop-in
+      ansible.builtin.copy:
+        src: "{{ molecule_backup_dir }}/50-redhat.conf"
+        dest: "{{ molecule_stock_dropin }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Accept the restored stock fixture, proving each rejection came from its alteration
+      ansible.builtin.include_role:
+        name: remote_access_ssh_ca
