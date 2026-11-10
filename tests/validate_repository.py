@@ -806,6 +806,13 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         "a CA directive in the crypto-policy back-end",
         "a Match block in the crypto-policy back-end",
         "a missing crypto-policy back-end",
+        "the equals form of the stock Include",
+        "an equals-form CA directive beside the stock Include",
+        "a quoted-keyword CA directive beside the stock Include",
+        "an equals-form Match beside the stock Include",
+        "an equals-form CA directive in the crypto-policy back-end",
+        "an equals-form Include in the main sshd configuration",
+        "an equals-form Match in the main sshd configuration",
         "Accept the restored stock fixture",
     }
     missing = sorted(value for value in rejection_cases if value not in verify)
