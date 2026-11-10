@@ -14,6 +14,7 @@ token_secret: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_SECRET') }}"
 validate_certs: true
 
 want_facts: true
+want_proxmox_nodes_ansible_host: true
 qemu_extended_statuses: true
 strict: false
 
@@ -31,6 +32,10 @@ compose:
           | map('regex_replace', '/.*$', '')
           | reject('search', ':')
           | list | first | default(None))
+    or ((lookup('ansible.builtin.env', 'SERVICERADAR_PROXMOX_UUID_ADDRESSES')
+          | default('{}', true) | from_json)
+         .get((proxmox_smbios1 | default({})).get('uuid'), None))
+    or ansible_host
 
 filters:
   - "proxmox_status == 'running'"

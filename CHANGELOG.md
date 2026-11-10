@@ -36,7 +36,23 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- Install the ServiceRadar agent from GitHub releases or an explicit package
+  URL, SHA-256, and version, instead of the retired release host. The
+  installers start the agent only when its enrollment assets exist.
+- Resolve agent release metadata once on the Ansible controller for each batch
+  of hosts instead of once on every managed host, so hosts behind one address
+  no longer exhaust the anonymous GitHub API limit. Managed hosts need access
+  only to the package download URL.
+- Preserve verified Proxmox management addresses in the dynamic inventory.
 - Make canonical-only AWX callback contract output and its checked-in vector
   byte-identical to the bytes covered by the published SHA-256.
 - Pin the Windows role to the AWX 24.6.1-supported `ansible.windows 2.4.0`
   runtime and enforce Authenticode policy explicitly before package execution.
+
+### Fixed
+
+- Report a rate-limited or otherwise unusable agent release lookup with its
+  cause and the pinned package inputs, rather than a dump of response headers.
+- Let the agent installers complete in check mode and report the planned
+  package action instead of failing on a package file that a dry run never
+  downloads.

@@ -30,6 +30,29 @@ through a versioned custom credential definition under `awx/credential-types/`.
    controller ID, AWX inventory ID, AWX host ID, and canonical device UID;
    display names and IP addresses are not execution identities.
 
+## Management address selection
+
+Guests use their reported QEMU Guest Agent or LXC interface IPv4 addresses.
+Nodes use the inventory plugin's native address discovery: the first
+interface, sorted by name, that reports an active field, address, and gateway.
+Review these addresses before importing the inventory for execution.
+
+When QEMU Guest Agent data is unavailable, an operator may set the non-secret
+AWX SCM inventory source variable `SERVICERADAR_PROXMOX_UUID_ADDRESSES` to a
+JSON string mapping a VM's exact SMBIOS UUID to its verified management IPv4
+address. Keep this value in the cluster-specific source configuration, never
+in SCM. Establish the mapping from an independent identity-bearing source,
+such as equality between the Proxmox SMBIOS UUID and a Kubernetes Node's
+`systemUUID`, with that Node's `InternalIP`. Hostname resemblance alone is
+insufficient. Reported guest interface addresses take precedence over this
+fallback.
+
+The compose expression preserves a node address already set by the plugin.
+If no reported or reviewed address exists, it leaves the address unset; do
+not treat a hostname or an empty address as a reviewed connection target.
+After every source change, sync AWX, import memberships into ServiceRadar,
+and review the resulting controller/inventory/host/device bindings again.
+
 ## Restricted CONNECT relay
 
 The relay credential type adds one required, non-secret `https_proxy` field.
