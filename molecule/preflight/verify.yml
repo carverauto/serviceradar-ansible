@@ -23,7 +23,8 @@
             ctx=user=srtest,host=localhost,addr=127.0.0.1
             eff=$(/usr/sbin/sshd -T -f "$d/sshd_config" -C "$ctx" 2>/dev/null |
                   grep -E '^(trustedusercakeys|authorizedprincipalsfile) ' | tr '\n' ';')
-            printf 'FORM %-22s rc=%s effective=[%s] err=[%s]\n' "$1" "$rc" "$eff" "$(head -c 110 "$d/err" | tr '\n' ' ')"
+            err=$(head -c 110 "$d/err" | tr '\n' ' ')
+            printf 'FORM %-22s rc=%s effective=[%s] err=[%s]\n' "$1" "$rc" "$eff" "$err"
           }
           probe include-space     "Include $d/inc.conf"
           probe include-equals    "Include=$d/inc.conf"
