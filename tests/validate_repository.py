@@ -755,6 +755,7 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         "--collections-path .collections --requirements-file requirements.yml",
         'test "${#platform_images[@]}" -eq 4',
         "docker info",
+        "--requirements-file molecule/preflight/collections.yml",
         'molecule test -s "${MOLECULE_SCENARIO}"',
     }
     missing = sorted(value for value in molecule_required if value not in molecule)
@@ -765,6 +766,28 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         "matrix": {"scenario": ["preflight"]},
     }:
         raise AssertionError("Molecule scenario matrix differs from the reviewed set")
+
+    # The Docker driver's collections are not part of ansible-core. Without an
+    # exact reviewed pin the scenario depends on whatever a runner happens to
+    # carry, or on an unpinned install at run time.
+    driver_collections = load_unique_yaml(ROOT / "molecule/preflight/collections.yml")
+    pinned = {
+        entry.get("name"): str(entry.get("version"))
+        for entry in driver_collections.get("collections", [])
+    }
+    if set(pinned) != {
+        "community.docker",
+        "community.library_inventory_filtering_v1",
+        "ansible.posix",
+    } or not all(re.fullmatch(r"\d+\.\d+\.\d+", version) for version in pinned.values()):
+        raise AssertionError(
+            f"Molecule Docker driver collections are not exactly pinned: {pinned}"
+        )
+    scenario = (ROOT / "molecule/preflight/molecule.yml").read_text(encoding="utf-8")
+    if "collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections" not in scenario:
+        raise AssertionError(
+            "Molecule preflight scenario must resolve only the reviewed collections"
+        )
 
     requirements = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
     lock = (ROOT / "requirements-ci.lock").read_text(encoding="utf-8")

@@ -1,0 +1,11 @@
+---
+# Collections the Molecule Docker driver itself needs to create and destroy
+# the fixture containers. They are test-only: the published collection and the
+# AWX execution environment install requirements.yml instead.
+collections:
+  - name: community.docker
+    version: 4.8.9
+  - name: community.library_inventory_filtering_v1
+    version: 1.1.5
+  - name: ansible.posix
+    version: 1.6.2

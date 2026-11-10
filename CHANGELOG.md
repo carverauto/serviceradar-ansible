@@ -40,6 +40,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   `main`, on secretless GitHub-hosted `ubuntu-24.04` runners with actions
   pinned to full commits. The repository contract checks now validate that
   workflow instead of the retired Forgejo one.
+- Pin the collections the Molecule Docker driver needs in
+  `molecule/preflight/collections.yml`; the retired runner carried them
+  preinstalled and nothing in the repository declared them.
 - Install the ServiceRadar agent from GitHub releases or an explicit package
   URL, SHA-256, and version, instead of the retired release host. The
   installers start the agent only when its enrollment assets exist.

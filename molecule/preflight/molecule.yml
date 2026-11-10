@@ -41,6 +41,7 @@ provisioner:
   config_options:
     defaults:
       roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections
   inventory:
     host_vars:
       sr-ra-ubuntu2204:

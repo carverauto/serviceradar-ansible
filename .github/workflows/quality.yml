@@ -157,6 +157,12 @@ jobs:
           set -euo pipefail
           .venv/bin/ansible-galaxy collection install \
             --collections-path .collections --requirements-file requirements.yml
+      - name: Install exact reviewed Molecule Docker driver collections
+        run: |
+          set -euo pipefail
+          .venv/bin/ansible-galaxy collection install \
+            --collections-path .collections \
+            --requirements-file molecule/preflight/collections.yml
       - name: Generate an ephemeral uncommitted test CA and run pinned Molecule matrix
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
