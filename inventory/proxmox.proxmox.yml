@@ -27,12 +27,11 @@ strict: false
 #   serviceradar_address_source    guest_agent_primary_nic, lxc_config,
 #                                  lxc_interface, plugin_default or none
 #   serviceradar_primary_mac       lower-case MAC of the primary NIC, or ''
-#   serviceradar_uuid_map_address  entry of the reviewed UUID map for this
-#                                  guest; it is used when the source is
-#                                  plugin_default or none
 #
 # A compose entry cannot read another composed variable, so the shared
-# fragments are repeated. Do not edit the block by hand: change
+# fragments are repeated. Inventory compose also runs with lookups disabled
+# before ansible-core 2.19, so no entry may call one. Do not edit the block
+# by hand: change
 # scripts/render_proxmox_address_compose.py and run it with --write.
 # BEGIN rendered by scripts/render_proxmox_address_compose.py
 compose:
@@ -68,9 +67,7 @@ compose:
     | regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True))
     | default('(?!)', true)) ~ '$')) | sort(attribute='name') | map(attribute='inet', default='') |
     map('string') | map('regex_replace', '/.*$', '') | select('match', '^[0-9]+([.][0-9]+){3}$') |
-    reject('match', '^(127|169[.]254)[.]') | first | default('')) or ((lookup('ansible.builtin.env',
-    'SERVICERADAR_PROXMOX_UUID_ADDRESSES') | default('{}', true) | from_json).get((proxmox_smbios1 |
-    default({})).get('uuid'), None)) or ansible_host
+    reject('match', '^(127|169[.]254)[.]') | first | default('')) or ansible_host
   serviceradar_address_source: >-
     'guest_agent_primary_nic' if ([proxmox_agent_interfaces | default([])] | flatten |
     select('mapping') | selectattr('name', 'string') | selectattr('mac-address', 'string') |
@@ -116,9 +113,6 @@ compose:
     proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string) |
     regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True)) |
     default('', true) | lower
-  serviceradar_uuid_map_address: >-
-    ((lookup('ansible.builtin.env', 'SERVICERADAR_PROXMOX_UUID_ADDRESSES') | default('{}', true) |
-    from_json).get((proxmox_smbios1 | default({})).get('uuid'), None)) | default('', true)
 # END rendered by scripts/render_proxmox_address_compose.py
 
 filters:
@@ -139,8 +133,6 @@ groups:
   windows: >-
     proxmox_vmtype == 'qemu' and proxmox_ostype is defined
     and proxmox_ostype is match('^w')
-  # Guests with no management address from any source. Target or exclude it
-  # explicitly; such a host has no ansible_host at all.
-  address_unresolved: >-
-    (serviceradar_address_source | default('none')) == 'none'
-    and not (serviceradar_uuid_map_address | default('', true))
+  # Guests with no management address. Target or exclude it explicitly; such
+  # a host has no ansible_host at all.
+  address_unresolved: (serviceradar_address_source | default('none')) == 'none'

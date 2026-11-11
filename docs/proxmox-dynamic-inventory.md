@@ -58,8 +58,7 @@ Sources are tried in this order and the first one that yields an address wins:
 3. **LXC container without a static address.** The same rule as for a QEMU
    guest, applied to the interfaces Proxmox reports for the container and the
    primary NIC's `hwaddr`.
-4. **The reviewed UUID map**, described below.
-5. **The inventory plugin's own address.** The plugin sets one for Proxmox
+4. **The inventory plugin's own address.** The plugin sets one for Proxmox
    nodes only: the first interface, sorted by name, that reports an active
    field, an address, and a gateway.
 
@@ -76,7 +75,6 @@ a downstream tool has to read the expressions:
 | `ansible_host` | The chosen address. Absent when nothing resolved; it is never an empty string. |
 | `serviceradar_address_source` | Which Proxmox-held data produced the address; see the next table. |
 | `serviceradar_primary_mac` | Lower-case MAC of the primary NIC, or an empty string when the guest has no configured NIC. |
-| `serviceradar_uuid_map_address` | The reviewed UUID map's address for this guest, or an empty string. Present only where the map can be read; see below. |
 
 | `serviceradar_address_source` | Meaning |
 | --- | --- |
@@ -86,8 +84,8 @@ a downstream tool has to read the expressions:
 | `plugin_default` | The plugin's own address; Proxmox nodes. |
 | `none` | Proxmox data produced no address. |
 
-A guest with source `none` and no UUID map address has no `ansible_host` and
-is placed in the `address_unresolved` group. Exclude it from a run with
+A guest with source `none` has no `ansible_host` and is placed in the
+`address_unresolved` group. Exclude it from a run with
 `--limit '!address_unresolved'`, or list the group to see what needs
 attention. Without `ansible_host`, Ansible would try to connect to the guest's
 Proxmox display name, so do not treat a host in this group as a reviewed
@@ -106,32 +104,14 @@ when it reports no interface with the primary MAC, the operator sees:
 - the host in the `address_unresolved` group;
 - no `ansible_host` on the host.
 
-Fix the agent rather than supplying an address by hand. For Windows guests,
-`install-qemu-guest-agent-windows.yml` installs it.
+There is no manual override: the inventory has no per-host address input, so
+the way to address such a guest is to get its agent working. For Windows
+guests, `install-qemu-guest-agent-windows.yml` installs it.
 
-### Reviewed UUID map
-
-When QEMU Guest Agent data is unavailable, an operator may set the non-secret
-AWX SCM inventory source variable `SERVICERADAR_PROXMOX_UUID_ADDRESSES` to a
-JSON string mapping a VM's exact SMBIOS UUID to its verified management IPv4
-address. Keep this value in the cluster-specific source configuration, never
-in SCM. Establish the mapping from an independent identity-bearing source,
-such as equality between the Proxmox SMBIOS UUID and a Kubernetes Node's
-`systemUUID`, with that Node's `InternalIP`. Hostname resemblance alone is
-insufficient. An address from sources 1 to 3 takes precedence over this
-fallback.
-
-The map is read with an environment lookup inside the inventory's `compose`
-expressions. ansible-core releases before 2.19 refuse lookups there, so on
-those releases, including the 2.17 release this repository's checks are
-pinned to, the map is never consulted: `serviceradar_uuid_map_address` is
-absent and a guest that needs the map stays in `address_unresolved`. On
-ansible-core 2.19 and later the map is read, `serviceradar_uuid_map_address`
-holds the entry, and the entry becomes `ansible_host` when
-`serviceradar_address_source` is `none` or `plugin_default`. The source
-variable keeps describing what Proxmox data produced, so a guest addressed by
-the map shows source `none` together with a non-empty
-`serviceradar_uuid_map_address`, and is not in `address_unresolved`.
+Earlier revisions read an operator-supplied map from SMBIOS UUID to address
+out of the `SERVICERADAR_PROXMOX_UUID_ADDRESSES` environment variable. It has
+been removed and the variable is ignored; delete it from the inventory source
+configuration.
 
 ### Changing the expressions
 
@@ -140,6 +120,8 @@ the fragments they share. The fragments are defined once in
 `scripts/render_proxmox_address_compose.py`, and the inventory carries the
 rendered block between two marker comments. Edit the script, run it with
 `--write`, and commit both files; the repository checks fail when they differ.
+Inventory `compose` runs with lookups disabled before ansible-core 2.19, so an
+expression must not call `lookup` or `query`.
 
 After every source change, sync AWX, import memberships into ServiceRadar,
 and review the resulting controller/inventory/host/device bindings again.

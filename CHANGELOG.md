@@ -28,8 +28,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A controlled public-runner isolation workflow covering ambient credential and
   host-socket absence, private-network denial, anonymous public build egress,
   inner Docker, cross-job state removal, and abnormal lifecycle cleanup.
-- Host variables `serviceradar_address_source`, `serviceradar_primary_mac`
-  and `serviceradar_uuid_map_address` on every Proxmox inventory host, and an
+- Host variables `serviceradar_address_source` and `serviceradar_primary_mac`
+  on every Proxmox inventory host, and an
   `address_unresolved` group for guests with no resolvable management address.
 - A fleet SSH-CA enrollment role and wrappers replicating a verified reference
   layout (locked privilege-free account, user-CA trust, opaque policy
@@ -53,7 +53,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   of hosts instead of once on every managed host, so hosts behind one address
   no longer exhaust the anonymous GitHub API limit. Managed hosts need access
   only to the package download URL.
-- Preserve verified Proxmox management addresses in the dynamic inventory.
+- Preserve the address the Proxmox inventory plugin discovers for a node.
 - Choose each Proxmox guest's management address from the guest interface
   whose MAC equals that of its primary configured NIC (`net0`, else the
   lowest-numbered `netN`), instead of the first address of the first
@@ -95,6 +95,14 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Removed
 
+- The Proxmox inventory's operator-supplied address map, read from the
+  `SERVICERADAR_PROXMOX_UUID_ADDRESSES` environment variable, and the
+  `serviceradar_uuid_map_address` host variable. Inventory `compose` runs with
+  lookups disabled on ansible-core before 2.19, so the map was never applied on
+  the release this repository pins, and it was per-host manual input. The
+  variable is now ignored. A QEMU guest needs a working QEMU Guest Agent to be
+  addressed; `address_unresolved` depends on `serviceradar_address_source`
+  alone.
 - The Forgejo workflow definitions, which no longer run, and the controlled
   public-runner isolation workflow, script, and runbook that tested the
   retired self-hosted runner.

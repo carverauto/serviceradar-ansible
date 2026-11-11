@@ -71,16 +71,9 @@ LXC_CONFIG_ADDRESS = (
     "| regex_search('[0-9]+(?:[.][0-9]+){3}$') | default('', true)) "
     "if (proxmox_vmtype | default('')) == 'lxc' else '')"
 )
-UUID_MAP_ADDRESS = (
-    "((lookup('ansible.builtin.env', 'SERVICERADAR_PROXMOX_UUID_ADDRESSES') "
-    "| default('{}', true) | from_json)"
-    ".get((proxmox_smbios1 | default({})).get('uuid'), None))"
-)
-
 COMPOSE = {
     "ansible_host": (
-        f"{GUEST_AGENT_ADDRESS} or {LXC_CONFIG_ADDRESS} or {LXC_INTERFACE_ADDRESS} "
-        f"or {UUID_MAP_ADDRESS} or ansible_host"
+        f"{GUEST_AGENT_ADDRESS} or {LXC_CONFIG_ADDRESS} or {LXC_INTERFACE_ADDRESS} or ansible_host"
     ),
     "serviceradar_address_source": (
         f"'guest_agent_primary_nic' if {GUEST_AGENT_ADDRESS} "
@@ -89,7 +82,6 @@ COMPOSE = {
         "else 'plugin_default' if (ansible_host | default('', true)) else 'none'"
     ),
     "serviceradar_primary_mac": f"{PRIMARY_MAC} | default('', true) | lower",
-    "serviceradar_uuid_map_address": f"{UUID_MAP_ADDRESS} | default('', true)",
 }
 
 
