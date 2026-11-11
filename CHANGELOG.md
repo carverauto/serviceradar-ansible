@@ -28,6 +28,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A controlled public-runner isolation workflow covering ambient credential and
   host-socket absence, private-network denial, anonymous public build egress,
   inner Docker, cross-job state removal, and abnormal lifecycle cleanup.
+- Host variables `serviceradar_address_source`, `serviceradar_primary_mac`
+  and `serviceradar_uuid_map_address` on every Proxmox inventory host, and an
+  `address_unresolved` group for guests with no resolvable management address.
 - A fleet SSH-CA enrollment role and wrappers replicating a verified reference
   layout (locked privilege-free account, user-CA trust, opaque policy
   principals, proof-gated sshd reload) plus a controller-local known_hosts
@@ -51,6 +54,15 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   no longer exhaust the anonymous GitHub API limit. Managed hosts need access
   only to the package download URL.
 - Preserve verified Proxmox management addresses in the dynamic inventory.
+- Choose each Proxmox guest's management address from the guest interface
+  whose MAC equals that of its primary configured NIC (`net0`, else the
+  lowest-numbered `netN`), instead of the first address of the first
+  interface the guest lists. A guest that lists container or tunnel devices
+  first no longer resolves to an address nothing else can reach. An LXC
+  container's static `ip=` is used directly. A guest whose primary NIC is not
+  reported, or has no usable IPv4 address, now has no `ansible_host` rather
+  than another interface's address; a QEMU guest needs a working QEMU Guest
+  Agent.
 - Make canonical-only AWX callback contract output and its checked-in vector
   byte-identical to the bytes covered by the published SHA-256.
 - Pin the Windows role to the AWX 24.6.1-supported `ansible.windows 2.4.0`

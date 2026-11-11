@@ -154,8 +154,15 @@ or a restricted, non-intercepting HTTPS CONNECT relay. Both inject a least-
 privilege API token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs
 in git or inventory variables. Use one AWX inventory per Proxmox cluster so
 reused PVE hostnames and VMIDs remain distinct through ServiceRadar's
-controller/inventory/host identity. See the
-[Proxmox inventory guide](docs/proxmox-dynamic-inventory.md).
+controller/inventory/host identity.
+
+Each guest's management address is chosen from data Proxmox holds, with no
+per-host input: the guest interface whose MAC equals that of the guest's
+primary configured NIC (`net0`), or the static address of an LXC container.
+A QEMU guest needs a working QEMU Guest Agent for this. Every host reports the
+decision in `serviceradar_address_source`, and a guest with no resolvable
+address has no `ansible_host` and lands in the `address_unresolved` group. See
+the [Proxmox inventory guide](docs/proxmox-dynamic-inventory.md).
 
 ## Agent installation content
 

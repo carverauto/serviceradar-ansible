@@ -67,6 +67,7 @@ LINUX_TRUSTED_CA_REQUIRED_FILES = {
 PROXMOX_INVENTORY_REQUIRED_FILES = {
     "inventory/proxmox.proxmox.yml",
     "docs/proxmox-dynamic-inventory.md",
+    "scripts/render_proxmox_address_compose.py",
     "collections/requirements.yml",
     "awx/credential-types/proxmox-api-token-ca/v1/inputs.json",
     "awx/credential-types/proxmox-api-token-ca/v1/injectors.json",
@@ -477,6 +478,10 @@ def check_proxmox_inventory() -> None:
         "want_facts: true",
         "proxmox_agent_interfaces",
         "proxmox_lxc_interfaces",
+        "proxmox_net0",
+        "serviceradar_address_source",
+        "serviceradar_primary_mac",
+        "address_unresolved",
     }
     absent = sorted(value for value in required if value not in inventory)
     if absent:
