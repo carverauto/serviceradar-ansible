@@ -18,7 +18,6 @@ from ansible.inventory.data import InventoryData
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.inventory import BaseInventoryPlugin, Constructable
 from ansible.plugins.loader import init_plugin_loader
-from ansible.release import __version__ as ANSIBLE_CORE_VERSION
 from ansible.template import Templar
 from ansible.utils.unsafe_proxy import wrap_var
 import yaml
@@ -30,8 +29,7 @@ UUID = "11111111-2222-4333-8444-555555555555"
 PRIMARY_MAC = "bc:24:11:00:00:01"
 HOST = "host01"
 UNRESOLVED = "address_unresolved"
-# ansible-core refuses lookups inside inventory compose before 2.19.
-COMPOSE_REFUSES_LOOKUPS = tuple(int(part) for part in ANSIBLE_CORE_VERSION.split(".")[:2]) < (2, 19)
+RETIRED_MAP_VARIABLE = "SERVICERADAR_PROXMOX_UUID_ADDRESSES"
 init_plugin_loader()
 # One templating environment for the whole module keeps its compiled-expression cache.
 TEMPLAR = Templar(loader=DataLoader())
@@ -65,16 +63,10 @@ def kubernetes_node_interfaces():
 class _Composer(BaseInventoryPlugin, Constructable):
     NAME = "serviceradar_test_composer"
 
-    def __init__(self, lookups_permitted):
+    def __init__(self):
         super().__init__()
-        self.lookups_permitted = lookups_permitted
         self.inventory = InventoryData()
         self.templar = TEMPLAR
-
-    def _compose(self, template, variables, disable_lookups=True):
-        return super()._compose(
-            template, variables, disable_lookups=disable_lookups and not self.lookups_permitted
-        )
 
 
 class Composed:
@@ -95,13 +87,9 @@ class Composed:
         return UNRESOLVED in self.groups
 
 
-def compose(variables, uuid_map=None, lookups_permitted=False):
-    """Repeat what the plugin does for one guest: set facts, compose, group.
-
-    `lookups_permitted` models ansible-core 2.19 and later, where the UUID
-    map lookup is allowed to run inside compose.
-    """
-    plugin = _Composer(lookups_permitted)
+def compose(variables):
+    """Repeat what the plugin does for one guest: set facts, compose, group."""
+    plugin = _Composer()
     plugin.inventory.add_host(HOST)
     for name, value in wrap_var(variables).items():
         plugin.inventory.set_variable(HOST, name, value)
@@ -115,11 +103,10 @@ def compose(variables, uuid_map=None, lookups_permitted=False):
         if name in entries
     }
     partial = {name: entries[name] for name in entries if name not in total}
-    with patch.dict(os.environ, {"SERVICERADAR_PROXMOX_UUID_ADDRESSES": json.dumps(uuid_map or {})}):
-        plugin._set_composite_vars(total, facts, HOST, strict=True)
-        plugin._set_composite_vars(partial, facts, HOST, strict=INVENTORY["strict"])
-        unresolved = {name: rule for name, rule in INVENTORY["groups"].items() if name == UNRESOLVED}
-        plugin._add_host_to_composed_groups(unresolved, facts, HOST, strict=True)
+    plugin._set_composite_vars(total, facts, HOST, strict=True)
+    plugin._set_composite_vars(partial, facts, HOST, strict=INVENTORY["strict"])
+    unresolved = {name: rule for name, rule in INVENTORY["groups"].items() if name == UNRESOLVED}
+    plugin._add_host_to_composed_groups(unresolved, facts, HOST, strict=True)
     host = plugin.inventory.get_host(HOST)
     return Composed(host.get_vars(), {group.name for group in host.get_groups()})
 
@@ -363,66 +350,40 @@ class LxcAddressTest(unittest.TestCase):
 class FallbackAddressTest(unittest.TestCase):
     def test_node_keeps_the_address_the_plugin_discovered(self):
         self.assertTrue(INVENTORY["want_proxmox_nodes_ansible_host"])
-        for lookups_permitted in (False, True):
-            with self.subTest(lookups_permitted=lookups_permitted):
-                result = compose({"ansible_host": "192.0.2.10"}, lookups_permitted=lookups_permitted)
-                self.assertEqual(result.address, "192.0.2.10")
-                self.assertEqual(result.source, "plugin_default")
-                self.assertFalse(result.unresolved)
-
-    def test_reported_qemu_address_precedes_reviewed_uuid_fallback(self):
-        result = compose(
-            {
-                "proxmox_vmtype": "qemu",
-                "proxmox_smbios1": {"uuid": UUID},
-                "proxmox_net0": qemu_net(),
-                "proxmox_agent_interfaces": kubernetes_node_interfaces(),
-            },
-            {UUID: "192.0.2.12"},
-            lookups_permitted=True,
-        )
-        self.assertEqual(result.address, "192.0.2.21")
-        self.assertEqual(result.source, "guest_agent_primary_nic")
-
-    def test_reviewed_uuid_address_fills_in_for_a_silent_guest_agent(self):
-        result = compose(
-            {"proxmox_vmtype": "qemu", "proxmox_smbios1": {"uuid": UUID}, "proxmox_net0": qemu_net()},
-            {UUID: "192.0.2.14"},
-            lookups_permitted=True,
-        )
-        self.assertEqual(result.address, "192.0.2.14")
-        self.assertEqual(result.source, "none")
-        self.assertEqual(result.variables["serviceradar_uuid_map_address"], "192.0.2.14")
+        result = compose({"ansible_host": "192.0.2.10"})
+        self.assertEqual(result.address, "192.0.2.10")
+        self.assertEqual(result.source, "plugin_default")
         self.assertFalse(result.unresolved)
 
-    def test_reviewed_address_requires_exact_smbios_uuid(self):
-        result = compose(
-            {"proxmox_vmtype": "qemu", "proxmox_name": "host01.example.com", "proxmox_net0": qemu_net()},
-            {UUID: "192.0.2.14"},
-            lookups_permitted=True,
-        )
-        self.assertEqual(result.address, "<no ansible_host>")
-        self.assertEqual(result.variables["serviceradar_uuid_map_address"], "")
-        self.assertTrue(result.unresolved)
-
     def test_missing_address_leaves_ansible_host_unset_instead_of_empty(self):
-        for lookups_permitted in (False, True):
-            with self.subTest(lookups_permitted=lookups_permitted):
-                result = compose({}, lookups_permitted=lookups_permitted)
-                self.assertNotIn("ansible_host", result.variables)
-                self.assertEqual(result.source, "none")
-                self.assertTrue(result.unresolved)
-
-    @unittest.skipUnless(COMPOSE_REFUSES_LOOKUPS, "this ansible-core runs lookups inside compose")
-    def test_uuid_map_is_not_consulted_where_compose_refuses_lookups(self):
-        result = compose(
-            {"proxmox_vmtype": "qemu", "proxmox_smbios1": {"uuid": UUID}, "proxmox_net0": qemu_net()},
-            {UUID: "192.0.2.14"},
-        )
-        self.assertEqual(result.address, "<no ansible_host>")
+        result = compose({})
+        self.assertNotIn("ansible_host", result.variables)
         self.assertEqual(result.source, "none")
-        self.assertNotIn("serviceradar_uuid_map_address", result.variables)
         self.assertTrue(result.unresolved)
+
+
+class NoManualOverrideTest(unittest.TestCase):
+    def test_retired_uuid_address_map_does_not_address_a_guest(self):
+        facts = {"proxmox_vmtype": "qemu", "proxmox_smbios1": {"uuid": UUID}, "proxmox_net0": qemu_net()}
+        with patch.dict(os.environ, {RETIRED_MAP_VARIABLE: json.dumps({UUID: "192.0.2.14"})}):
+            result = compose(facts)
+        self.assertNotIn("ansible_host", result.variables)
+        self.assertNotIn("serviceradar_uuid_map_address", result.variables)
+        self.assertEqual(result.source, "none")
+        self.assertTrue(result.unresolved)
+
+    def test_inventory_does_not_name_the_retired_map(self):
+        text = INVENTORY_PATH.read_text(encoding="utf-8")
+        self.assertNotIn(RETIRED_MAP_VARIABLE, text)
+        self.assertNotIn("serviceradar_uuid_map_address", text)
+
+    def test_address_expressions_call_no_lookup(self):
+        # Inventory compose refuses lookups before ansible-core 2.19, and
+        # `strict: false` would hide the refusal by dropping the variable.
+        expressions = {**INVENTORY["compose"], **INVENTORY["groups"]}
+        for name, expression in expressions.items():
+            with self.subTest(name=name):
+                self.assertNotRegex(expression, r"\b(lookup|query|q)\s*\(")
 
 
 class RenderedBlockTest(unittest.TestCase):
