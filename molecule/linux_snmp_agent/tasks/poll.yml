@@ -1,0 +1,36 @@
+---
+# One query from a peer, judged against the single outcome the case expects.
+# An answer, an authentication failure, an authorization failure and a
+# timeout are told apart, so a case cannot pass for the wrong reason.
+- name: "Poll: {{ molecule_case.case }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['snmpget'] + (molecule_case.options | default([]))
+         + ['-r', '0', '-t', '3', '-On', 'udp:' ~ molecule_target_address ~ ':161',
+            molecule_case.oid | default('.1.3.6.1.2.1.1.5.0')] }}
+  environment:
+    SNMPCONFPATH: "{{ molecule_poller_dir }}/{{ molecule_case.client }}"
+    SNMP_PERSISTENT_DIR: "{{ molecule_poller_dir }}/none"
+    MIBS: ""
+  delegate_to: "{{ molecule_denied_peer if molecule_case.from == 'denied' else molecule_allowed_peer }}"
+  register: molecule_poll
+  changed_when: false
+  failed_when: false
+
+- name: "Require the expected outcome: {{ molecule_case.case }}"
+  ansible.builtin.assert:
+    that:
+      - molecule_poll_outcome == molecule_case.expect
+    fail_msg: >-
+      {{ molecule_case.case }}: expected "{{ molecule_case.expect }}", observed
+      "{{ molecule_poll_outcome }}" (rc {{ molecule_poll.rc }}:
+      {{ molecule_poll.stdout }} {{ molecule_poll.stderr }}).
+  vars:
+    molecule_poll_text: "{{ molecule_poll.stdout ~ ' ' ~ molecule_poll.stderr }}"
+    molecule_poll_outcome: >-
+      {{ 'timeout' if molecule_poll.rc != 0 and 'Timeout' in molecule_poll_text
+         else 'authentication failure' if molecule_poll.rc != 0 and 'Authentication failure' in molecule_poll_text
+         else 'authorization failure' if molecule_poll.rc != 0 and 'authorizationError' in molecule_poll_text
+         else 'not in view' if molecule_poll.rc == 0 and 'No Such Object' in molecule_poll_text
+         else 'answer' if molecule_poll.rc == 0 and ' = ' in molecule_poll_text
+         else 'other failure' }}

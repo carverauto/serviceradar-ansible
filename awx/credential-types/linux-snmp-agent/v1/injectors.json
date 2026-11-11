@@ -1,0 +1,8 @@
+{
+  "env": {
+    "SERVICERADAR_SNMP_V3_USER": "{{ v3_user }}",
+    "SERVICERADAR_SNMP_V3_AUTH_PASSPHRASE": "{{ v3_auth_passphrase }}",
+    "SERVICERADAR_SNMP_V3_PRIV_PASSPHRASE": "{{ v3_priv_passphrase }}",
+    "SERVICERADAR_SNMP_V2C_COMMUNITY": "{{ v2c_community }}"
+  }
+}

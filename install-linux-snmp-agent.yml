@@ -1,0 +1,13 @@
+---
+# Install and configure snmpd so a ServiceRadar agent can poll the host. In
+# AWX, retain target_hosts=all and use the reviewed job-template limit. Attach
+# a credential of the custom type awx/credential-types/linux-snmp-agent/v1;
+# the SNMP secret never belongs in this repository, an inventory, a survey,
+# or job-template extra variables. See roles/linux_snmp_agent/README.md.
+- name: Install a source-restricted read-only SNMP agent
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: linux_snmp_agent

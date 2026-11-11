@@ -1,0 +1,17 @@
+{% if linux_snmp_agent_client_anonymous | default(false) %}
+# Deliberately empty: this query supplies its own well-known community.
+{% elif linux_snmp_agent_mode == 'v3' %}
+defVersion 3
+defSecurityName {{ linux_snmp_agent_v3_user }}
+defSecurityLevel authPriv
+defAuthType {{ linux_snmp_agent_v3_auth_protocol }}
+defPrivType {{ linux_snmp_agent_v3_priv_protocol }}
+defAuthPassphrase {{ linux_snmp_agent_v3_auth_passphrase }}
+defPrivPassphrase {{ linux_snmp_agent_v3_priv_passphrase }}
+{% else %}
+defVersion 2c
+defCommunity {{ linux_snmp_agent_v2c_community }}
+{% endif %}
+{% if linux_snmp_agent_client_source | default('') | length > 0 %}
+clientaddr {{ linux_snmp_agent_client_source }}
+{% endif %}

@@ -1,0 +1,11 @@
+---
+- name: Validate the SNMP agent inputs before changing the host
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Install, configure and prove the SNMP agent
+  ansible.builtin.include_tasks: present.yml
+  when: linux_snmp_agent_state == 'present'
+
+- name: Remove the SNMP agent configuration
+  ansible.builtin.include_tasks: absent.yml
+  when: linux_snmp_agent_state == 'absent'

@@ -1,0 +1,142 @@
+---
+# Every query below can fail in a way the role tells apart: an answer, an
+# authentication failure and a timeout are different outcomes, and a check
+# that expects silence requires a timeout rather than any error.
+- name: Query sysName from the local agent with the supplied credential
+  ansible.builtin.command:
+    argv: "{{ linux_snmp_agent_probe_argv }}"
+  environment: "{{ linux_snmp_agent_probe_env.allowed }}"
+  register: linux_snmp_agent_verify_allowed
+  changed_when: false
+  failed_when: false
+  no_log: true
+  retries: 10
+  delay: 2
+  until: linux_snmp_agent_verify_allowed.rc == 0
+
+- name: Require the agent to answer the supplied credential
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_verify_allowed.rc == 0
+    fail_msg: >-
+      The local SNMP agent on {{ inventory_hostname }} did not return sysName
+      for the supplied credential:
+      {{ 'it rejected the credential'
+         if 'Authentication failure' in linux_snmp_agent_verify_output
+         else 'it does not know the user'
+         if 'Unknown user name' in linux_snmp_agent_verify_output
+         else 'it did not respond on udp:127.0.0.1:' ~ linux_snmp_agent_port
+         if 'Timeout' in linux_snmp_agent_verify_output
+         else 'snmpget failed for another reason; inspect the snmpd journal on the host' }}.
+  vars:
+    linux_snmp_agent_verify_output: >-
+      {{ linux_snmp_agent_verify_allowed.stdout | default('') }}
+      {{ linux_snmp_agent_verify_allowed.stderr | default('') }}
+
+- name: Count plaintext SNMPv3 user lines left in the persistent store
+  ansible.builtin.command:
+    argv: [grep, -c, "^createUser", "{{ linux_snmp_agent_platform.persistent_file }}"]
+  register: linux_snmp_agent_plaintext_users
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: linux_snmp_agent_mode == 'v3'
+
+- name: Require the agent to have discarded the plaintext passphrases
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_plaintext_users.stdout | trim == '0'
+    fail_msg: >-
+      {{ linux_snmp_agent_platform.persistent_file }} still holds a
+      createUser line, so the agent did not convert the SNMPv3 passphrases
+      into keys.
+  when: linux_snmp_agent_mode == 'v3'
+
+- name: Query the agent with the supplied credential from a source that is not allowed
+  ansible.builtin.command:
+    argv: "{{ linux_snmp_agent_probe_argv }}"
+  environment: "{{ linux_snmp_agent_probe_env.denied }}"
+  register: linux_snmp_agent_verify_denied
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Query the agent with the best-known default community
+  ansible.builtin.command:
+    argv:
+      - "{{ linux_snmp_agent_snmpget_path }}"
+      - -v2c
+      - -c
+      - public
+      - -r
+      - "0"
+      - -t
+      - "3"
+      - -On
+      - "udp:127.0.0.1:{{ linux_snmp_agent_port }}"
+      - "{{ linux_snmp_agent_sysname_oid }}"
+  environment: "{{ linux_snmp_agent_probe_env.anonymous }}"
+  register: linux_snmp_agent_verify_public
+  changed_when: false
+  failed_when: false
+
+- name: Classify the negative controls
+  ansible.builtin.set_fact:
+    linux_snmp_agent_source_filter_enforced: >-
+      {{ linux_snmp_agent_verify_denied.rc != 0
+         and 'Timeout' in (linux_snmp_agent_verify_denied.stdout ~ linux_snmp_agent_verify_denied.stderr) }}
+    linux_snmp_agent_source_filter_answered: "{{ linux_snmp_agent_verify_denied.rc == 0 }}"
+    linux_snmp_agent_public_refused: >-
+      {{ linux_snmp_agent_verify_public.rc != 0
+         and 'Timeout' in (linux_snmp_agent_verify_public.stdout ~ linux_snmp_agent_verify_public.stderr) }}
+
+# Fail closed: an agent that answers a default community, or answers a source
+# outside the list with no active managed firewall in front of it, is stopped.
+- name: Stop and disable an agent that is not restricted as required
+  ansible.builtin.systemd_service:
+    name: "{{ linux_snmp_agent_service_name }}"
+    state: stopped
+    enabled: false
+  when: >-
+    not linux_snmp_agent_public_refused
+    or (not linux_snmp_agent_source_filter_enforced and linux_snmp_agent_firewall_backend == 'none')
+
+- name: Require the agent to ignore the well-known default community
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_public_refused
+    fail_msg: >-
+      The agent on {{ inventory_hostname }} did not stay silent for the
+      community "public", so another configuration source grants access. It
+      was stopped and disabled. Remove the unmanaged snmpd configuration.
+
+- name: Require a conclusive source-filter control
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_source_filter_enforced or linux_snmp_agent_source_filter_answered
+    fail_msg: >-
+      The query from {{ linux_snmp_agent_denied_probe_source }} neither timed
+      out nor was answered, so the source filter could not be judged. The
+      agent on {{ inventory_hostname }} was stopped and disabled unless a
+      managed host firewall is active.
+
+- name: Require an enforcing source filter
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_source_filter_enforced or linux_snmp_agent_firewall_backend != 'none'
+    fail_msg: >-
+      The agent on {{ inventory_hostname }} answered a query from
+      {{ linux_snmp_agent_denied_probe_source }}, which is not a poller
+      source, and no managed host firewall is active. It was stopped and
+      disabled. Layers tried: TCP wrappers
+      {{ 'applied' if linux_snmp_agent_tcp_wrappers else 'not supported by this snmpd build' }},
+      systemd IP filter
+      {{ 'applied' if linux_snmp_agent_systemd_ip_filter else 'disabled by linux_snmp_agent_systemd_ip_filter' }}.
+      A systemd IP filter is silently ignored where the kernel refuses cgroup
+      BPF programs, for example in an unprivileged container. Activate
+      firewalld or ufw on the host, or remove conflicting hosts.allow rules.
+    success_msg: >-
+      {{ 'A daemon-level source filter refused the query from ' ~ linux_snmp_agent_denied_probe_source ~ '.'
+         if linux_snmp_agent_source_filter_enforced
+         else 'No daemon-level source filter is effective; relying on the active '
+              ~ linux_snmp_agent_firewall_backend ~ ' rules for the poller sources.' }}

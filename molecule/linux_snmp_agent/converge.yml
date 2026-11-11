@@ -1,0 +1,9 @@
+---
+- name: Converge a source-restricted SNMPv3 agent on real systemd fixtures
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  roles:
+    - role: linux_snmp_agent

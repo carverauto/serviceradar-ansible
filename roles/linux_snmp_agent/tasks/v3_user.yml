@@ -1,0 +1,51 @@
+---
+# A createUser line is not idempotent state: snmpd reads it once, derives
+# keys bound to its engine ID, stores those as a usmUser line and deletes the
+# plaintext. So the role never re-applies it. It asks the running agent
+# whether the supplied credential already works and only replaces the user
+# when it does not, which is also how a rotated passphrase is applied.
+- name: Read the agent service state
+  ansible.builtin.systemd_service:
+    name: "{{ linux_snmp_agent_service_name }}"
+  register: linux_snmp_agent_unit
+
+- name: Ask the running agent whether it accepts the supplied SNMPv3 credential
+  ansible.builtin.command:
+    argv: "{{ linux_snmp_agent_probe_argv }}"
+  environment: "{{ linux_snmp_agent_probe_env.allowed }}"
+  register: linux_snmp_agent_user_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: linux_snmp_agent_unit.status.ActiveState | default('') == 'active'
+
+- name: Replace the SNMPv3 user because the agent does not accept the credential
+  when: (linux_snmp_agent_user_probe.rc | default(1)) != 0
+  block:
+    # snmpd rewrites its persistent file on exit, so it must be stopped first.
+    - name: Stop the agent before its persistent store is edited
+      ansible.builtin.systemd_service:
+        name: "{{ linux_snmp_agent_service_name }}"
+        state: stopped
+
+    - name: Read the ownership of the persistent store
+      ansible.builtin.stat:
+        path: "{{ linux_snmp_agent_platform.persistent_file | dirname }}"
+      register: linux_snmp_agent_persistent_dir
+
+    # A createUser for an existing name replaces that user's keys at startup.
+    - name: Queue the SNMPv3 user for the agent to key and discard
+      ansible.builtin.lineinfile:
+        path: "{{ linux_snmp_agent_platform.persistent_file }}"
+        regexp: '^createUser\s'
+        line: >-
+          createUser {{ linux_snmp_agent_v3_user }} {{ linux_snmp_agent_v3_auth_protocol }}
+          "{{ linux_snmp_agent_v3_auth_passphrase }}" {{ linux_snmp_agent_v3_priv_protocol }}
+          "{{ linux_snmp_agent_v3_priv_passphrase }}"
+        create: true
+        owner: "{{ linux_snmp_agent_persistent_dir.stat.pw_name }}"
+        group: "{{ linux_snmp_agent_persistent_dir.stat.gr_name }}"
+        mode: "0600"
+      diff: false
+      no_log: true
+      notify: Restart snmpd

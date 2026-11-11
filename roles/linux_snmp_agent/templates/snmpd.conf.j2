@@ -1,0 +1,47 @@
+# Managed by the ServiceRadar Ansible role linux_snmp_agent.
+# Local edits are overwritten on the next run.
+{% if linux_snmp_agent_source_cidrs | length == 0 %}
+{{ linux_snmp_agent_refusing_to_answer_any_source
+   | ansible.builtin.mandatory('Refusing to render an snmpd configuration without poller sources.') }}
+{% endif %}
+{% if linux_snmp_agent_bind_address in ['0.0.0.0', '127.0.0.1'] %}
+agentaddress udp:{{ linux_snmp_agent_bind_address }}:{{ linux_snmp_agent_port }}
+{% else %}
+agentaddress udp:127.0.0.1:{{ linux_snmp_agent_port }},udp:{{ linux_snmp_agent_bind_address }}:{{ linux_snmp_agent_port }}
+{% endif %}
+dontLogTCPWrappersConnects yes
+{% if linux_snmp_agent_sys_location | length > 0 %}
+sysLocation {{ linux_snmp_agent_sys_location }}
+{% endif %}
+{% if linux_snmp_agent_sys_contact | length > 0 %}
+sysContact {{ linux_snmp_agent_sys_contact }}
+{% endif %}
+
+# Read-only view.
+{% for oid in linux_snmp_agent_view_included %}
+view {{ linux_snmp_agent_view_name }} included {{ oid }}
+{% endfor %}
+{% for oid in linux_snmp_agent_view_excluded_oids %}
+view {{ linux_snmp_agent_view_name }} excluded {{ oid }}
+{% endfor %}
+
+{% if linux_snmp_agent_mode == 'v3' %}
+# SNMPv3 authPriv, read-only. The user's keys live in the agent's persistent
+# store, never in this file. net-snmp has no per-user source list: the poller
+# sources are enforced by TCP wrappers, the snmpd.service IP filter and the
+# host firewall, and the role proves one of them is effective.
+rouser {{ linux_snmp_agent_v3_user }} priv -V {{ linux_snmp_agent_view_name }}
+{% else %}
+# SNMPv2c, read-only, loopback and listed poller sources only. SNMPv1 is not
+# mapped and write access is "none".
+com2sec {{ linux_snmp_agent_v2c_security_name }} 127.0.0.1 {{ linux_snmp_agent_v2c_community }}
+{% for cidr in linux_snmp_agent_source_cidrs %}
+com2sec {{ linux_snmp_agent_v2c_security_name }} {{ cidr }} {{ linux_snmp_agent_v2c_community }}
+{% endfor %}
+group {{ linux_snmp_agent_v2c_group_name }} v2c {{ linux_snmp_agent_v2c_security_name }}
+access {{ linux_snmp_agent_v2c_group_name }} "" v2c noauth exact {{ linux_snmp_agent_view_name }} none none
+{% endif %}
+{% if linux_snmp_agent_include_dropin_dir %}
+
+includeDir {{ linux_snmp_agent_dropin_dir }}
+{% endif %}

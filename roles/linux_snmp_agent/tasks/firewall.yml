@@ -1,0 +1,163 @@
+---
+- name: Check for firewalld
+  ansible.builtin.stat:
+    path: /usr/bin/firewall-cmd
+  register: linux_snmp_agent_firewalld_binary
+
+- name: Check for ufw
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: linux_snmp_agent_ufw_binary
+
+- name: Read the firewalld state
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --state]
+  register: linux_snmp_agent_firewalld_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - linux_snmp_agent_manage_firewall
+    - linux_snmp_agent_firewalld_binary.stat.exists
+
+- name: Read the ufw state
+  ansible.builtin.command:
+    argv: [/usr/sbin/ufw, status]
+  register: linux_snmp_agent_ufw_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - linux_snmp_agent_manage_firewall
+    - linux_snmp_agent_ufw_binary.stat.exists
+
+# Only a firewall that is already active is managed. With none active the
+# role relies on the daemon-level source filter that verify.yml proves.
+- name: Select the active host firewall
+  ansible.builtin.set_fact:
+    linux_snmp_agent_firewall_backend: >-
+      {{ 'firewalld' if (linux_snmp_agent_firewalld_state.rc | default(1)) == 0
+         else 'ufw' if 'Status: active' in (linux_snmp_agent_ufw_state.stdout | default(''))
+         else 'none' }}
+
+- name: Compare the wanted firewall rules with the recorded ones
+  ansible.builtin.set_fact:
+    linux_snmp_agent_firewall_wanted: "{{ linux_snmp_agent_firewall_sources }}"
+    linux_snmp_agent_firewall_stale: >-
+      {{ [] if linux_snmp_agent_recorded.get('firewall_backend', 'none') != linux_snmp_agent_firewall_backend
+         else linux_snmp_agent_recorded.get('sources', [])
+         if (linux_snmp_agent_recorded.get('port') | string) != (linux_snmp_agent_port | string)
+            or linux_snmp_agent_recorded.get('firewall_zone', '') != linux_snmp_agent_firewalld_zone
+         else linux_snmp_agent_recorded.get('sources', []) | difference(linux_snmp_agent_firewall_sources) }}
+    linux_snmp_agent_recorded_port: "{{ linux_snmp_agent_recorded.get('port', linux_snmp_agent_port) | string }}"
+    linux_snmp_agent_recorded_zone_argv: >-
+      {{ ['--zone=' ~ linux_snmp_agent_recorded.get('firewall_zone')]
+         if linux_snmp_agent_recorded.get('firewall_zone', '') | length > 0 else [] }}
+  vars:
+    linux_snmp_agent_firewall_sources: >-
+      {{ linux_snmp_agent_source_cidrs if linux_snmp_agent_state == 'present' else [] }}
+
+- name: Manage firewalld rich rules for the agent port
+  when: linux_snmp_agent_firewall_backend == 'firewalld'
+  block:
+    - name: Remove permanent firewalld rules for sources that are no longer pollers
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/firewall-cmd', '--permanent'] + linux_snmp_agent_recorded_zone_argv
+             + ['--remove-rich-rule=rule family="ipv4" source address="' ~ item ~ '" port port="'
+                ~ linux_snmp_agent_recorded_port ~ '" protocol="udp" accept'] }}
+      loop: "{{ linux_snmp_agent_firewall_stale }}"
+      register: linux_snmp_agent_firewalld_result
+      changed_when: >-
+        'NOT_ENABLED' not in (linux_snmp_agent_firewalld_result.stderr ~ linux_snmp_agent_firewalld_result.stdout)
+
+    - name: Remove runtime firewalld rules for sources that are no longer pollers
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/firewall-cmd'] + linux_snmp_agent_recorded_zone_argv
+             + ['--remove-rich-rule=rule family="ipv4" source address="' ~ item ~ '" port port="'
+                ~ linux_snmp_agent_recorded_port ~ '" protocol="udp" accept'] }}
+      loop: "{{ linux_snmp_agent_firewall_stale }}"
+      register: linux_snmp_agent_firewalld_result
+      changed_when: >-
+        'NOT_ENABLED' not in (linux_snmp_agent_firewalld_result.stderr ~ linux_snmp_agent_firewalld_result.stdout)
+
+    - name: Allow the agent port from the poller sources in the permanent firewalld configuration
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/firewall-cmd', '--permanent'] + linux_snmp_agent_firewalld_zone_argv
+             + ['--add-rich-rule=rule family="ipv4" source address="' ~ item ~ '" port port="'
+                ~ linux_snmp_agent_port ~ '" protocol="udp" accept'] }}
+      loop: "{{ linux_snmp_agent_firewall_wanted }}"
+      register: linux_snmp_agent_firewalld_result
+      changed_when: >-
+        'ALREADY_ENABLED' not in (linux_snmp_agent_firewalld_result.stderr ~ linux_snmp_agent_firewalld_result.stdout)
+
+    - name: Allow the agent port from the poller sources in the running firewalld configuration
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/firewall-cmd'] + linux_snmp_agent_firewalld_zone_argv
+             + ['--add-rich-rule=rule family="ipv4" source address="' ~ item ~ '" port port="'
+                ~ linux_snmp_agent_port ~ '" protocol="udp" accept'] }}
+      loop: "{{ linux_snmp_agent_firewall_wanted }}"
+      register: linux_snmp_agent_firewalld_result
+      changed_when: >-
+        'ALREADY_ENABLED' not in (linux_snmp_agent_firewalld_result.stderr ~ linux_snmp_agent_firewalld_result.stdout)
+
+- name: Manage ufw rules for the agent port
+  when: linux_snmp_agent_firewall_backend == 'ufw'
+  block:
+    - name: Remove ufw rules for sources that are no longer pollers
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/ufw
+          - delete
+          - allow
+          - in
+          - proto
+          - udp
+          - from
+          - "{{ item }}"
+          - to
+          - any
+          - port
+          - "{{ linux_snmp_agent_recorded_port }}"
+      loop: "{{ linux_snmp_agent_firewall_stale }}"
+      register: linux_snmp_agent_ufw_removed
+      changed_when: "'Rule deleted' in linux_snmp_agent_ufw_removed.stdout"
+
+    - name: Allow the agent port from the poller sources in ufw
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/ufw
+          - allow
+          - in
+          - proto
+          - udp
+          - from
+          - "{{ item }}"
+          - to
+          - any
+          - port
+          - "{{ linux_snmp_agent_port | string }}"
+          - comment
+          - serviceradar-snmp-agent
+      loop: "{{ linux_snmp_agent_firewall_wanted }}"
+      register: linux_snmp_agent_ufw_added
+      changed_when: "'Skipping' not in linux_snmp_agent_ufw_added.stdout"
+
+# The record lets a later run remove exactly the rules this role added.
+- name: Record what this role manages
+  ansible.builtin.copy:
+    content: "{{ linux_snmp_agent_state_record | to_nice_json }}"
+    dest: "{{ linux_snmp_agent_state_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    linux_snmp_agent_state_record:
+      firewall_backend: "{{ linux_snmp_agent_firewall_backend }}"
+      firewall_zone: "{{ linux_snmp_agent_firewalld_zone }}"
+      port: "{{ linux_snmp_agent_port | string }}"
+      sources: "{{ linux_snmp_agent_firewall_wanted }}"
+  when: linux_snmp_agent_state == 'present'

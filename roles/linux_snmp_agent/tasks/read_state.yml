@@ -1,0 +1,17 @@
+---
+- name: Check whether this role already manages the agent
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_state_path }}"
+  register: linux_snmp_agent_state_file
+
+- name: Read what an earlier run recorded
+  ansible.builtin.slurp:
+    src: "{{ linux_snmp_agent_state_path }}"
+  register: linux_snmp_agent_state_raw
+  when: linux_snmp_agent_state_file.stat.exists
+
+- name: Remember the recorded firewall rules
+  ansible.builtin.set_fact:
+    linux_snmp_agent_recorded: >-
+      {{ (linux_snmp_agent_state_raw.content | b64decode | from_json)
+         if linux_snmp_agent_state_raw.content is defined else {} }}

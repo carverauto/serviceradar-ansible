@@ -91,6 +91,44 @@ FLEET_SSH_REQUIRED_FILES = {
     "roles/fleet_ssh_enroll/templates/60-serviceradar-user-ca.conf.j2",
 }
 
+LINUX_SNMP_AGENT_REQUIRED_FILES = {
+    "install-linux-snmp-agent.yml",
+    "awx/credential-types/linux-snmp-agent/v1/inputs.json",
+    "awx/credential-types/linux-snmp-agent/v1/injectors.json",
+    "roles/linux_snmp_agent/README.md",
+    "roles/linux_snmp_agent/defaults/main.yml",
+    "roles/linux_snmp_agent/handlers/main.yml",
+    "roles/linux_snmp_agent/meta/argument_specs.yml",
+    "roles/linux_snmp_agent/meta/main.yml",
+    "roles/linux_snmp_agent/vars/main.yml",
+    "roles/linux_snmp_agent/tasks/main.yml",
+    "roles/linux_snmp_agent/tasks/validate.yml",
+    "roles/linux_snmp_agent/tasks/present.yml",
+    "roles/linux_snmp_agent/tasks/read_state.yml",
+    "roles/linux_snmp_agent/tasks/configure.yml",
+    "roles/linux_snmp_agent/tasks/source_filter.yml",
+    "roles/linux_snmp_agent/tasks/firewall.yml",
+    "roles/linux_snmp_agent/tasks/client_config.yml",
+    "roles/linux_snmp_agent/tasks/v3_user.yml",
+    "roles/linux_snmp_agent/tasks/verify.yml",
+    "roles/linux_snmp_agent/tasks/absent.yml",
+    "roles/linux_snmp_agent/templates/snmpd.conf.j2",
+    "roles/linux_snmp_agent/templates/source-filter.conf.j2",
+    "roles/linux_snmp_agent/templates/client-snmp.conf.j2",
+    "molecule/linux_snmp_agent/molecule.yml",
+    "molecule/linux_snmp_agent/prepare.yml",
+    "molecule/linux_snmp_agent/converge.yml",
+    "molecule/linux_snmp_agent/verify.yml",
+    "molecule/linux_snmp_agent/tasks/expect_rejection.yml",
+    "molecule/linux_snmp_agent/tasks/poll.yml",
+    "molecule/linux_snmp_agent/tasks/poller_clients.yml",
+    "molecule/linux_snmp_agent/vars/role_inputs.yml",
+    "tests/test_linux_snmp_agent_role.py",
+}
+
+MOLECULE_DOCKER_SCENARIOS = ("preflight", "linux_snmp_agent")
+
+
 def repository_files(pattern: str = "*"):
     for path in ROOT.rglob(pattern):
         if path.is_file() and not any(part in IGNORED_DIRS for part in path.parts):
@@ -611,6 +649,155 @@ def check_fleet_ssh_enroll() -> None:
         )
 
 
+def check_linux_snmp_agent() -> None:
+    missing = sorted(
+        name for name in LINUX_SNMP_AGENT_REQUIRED_FILES if not (ROOT / name).is_file()
+    )
+    if missing:
+        raise AssertionError(f"missing Linux SNMP agent content: {missing}")
+
+    wrapper = (ROOT / "install-linux-snmp-agent.yml").read_text(encoding="utf-8")
+    for value in (
+        "hosts: \"{{ target_hosts | default('all') }}\"",
+        "become: true",
+        "role: linux_snmp_agent",
+        "gather_facts: true",
+    ):
+        if value not in wrapper:
+            raise AssertionError(f"Linux SNMP agent wrapper contract missing: {value}")
+
+    # The SNMP secret reaches a job only through the AWX credential type's
+    # environment injectors. No wrapper, default, example or document may
+    # carry a value for it.
+    inputs = json.loads(
+        (ROOT / "awx/credential-types/linux-snmp-agent/v1/inputs.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    injectors = json.loads(
+        (ROOT / "awx/credential-types/linux-snmp-agent/v1/injectors.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fields = {field["id"]: field for field in inputs.get("fields", [])}
+    expected_environment = {
+        "SERVICERADAR_SNMP_V3_USER": "v3_user",
+        "SERVICERADAR_SNMP_V3_AUTH_PASSPHRASE": "v3_auth_passphrase",
+        "SERVICERADAR_SNMP_V3_PRIV_PASSPHRASE": "v3_priv_passphrase",
+        "SERVICERADAR_SNMP_V2C_COMMUNITY": "v2c_community",
+    }
+    if set(fields) != set(expected_environment.values()):
+        raise AssertionError("SNMP agent credential type has an unexpected input surface")
+    if not all(field.get("secret") is True for field in fields.values()):
+        raise AssertionError("every SNMP agent credential input must be an AWX secret input")
+    if set(inputs.get("required", [])) != set(fields) - {"v2c_community"}:
+        raise AssertionError(
+            "SNMP agent credential type must require SNMPv3 and leave the community optional"
+        )
+    if injectors != {
+        "env": {name: "{{ " + field + " }}" for name, field in expected_environment.items()}
+    }:
+        raise AssertionError("SNMP agent credential injectors differ from the reviewed contract")
+    defaults = (ROOT / "roles/linux_snmp_agent/defaults/main.yml").read_text(encoding="utf-8")
+    for name, field in expected_environment.items():
+        expected = (
+            f"linux_snmp_agent_{field}: "
+            f"\"{{{{ lookup('ansible.builtin.env', '{name}') }}}}\""
+        )
+        if expected not in defaults:
+            raise AssertionError(f"SNMP agent secret default is not the injected variable: {name}")
+    for name in ("install-linux-snmp-agent.yml", "roles/linux_snmp_agent/tasks/main.yml"):
+        if re.search(r"(passphrase|community)\s*:", (ROOT / name).read_text(encoding="utf-8")):
+            raise AssertionError(f"SNMP secret variable assigned outside the credential: {name}")
+
+    role_files = sorted(
+        name
+        for name in LINUX_SNMP_AGENT_REQUIRED_FILES
+        if name.startswith("roles/linux_snmp_agent/") and name.endswith((".yml", ".j2"))
+    )
+    role_text = "\n".join((ROOT / name).read_text(encoding="utf-8") for name in role_files)
+    required = {
+        "linux_snmp_agent_mode: v3",
+        "choices: [SHA-256, SHA-384, SHA-512]",
+        "linux_snmp_agent_v3_priv_protocol: AES",
+        "priv -V {{ linux_snmp_agent_view_name }}",
+        "v2c noauth exact {{ linux_snmp_agent_view_name }} none none",
+        "Refusing to configure an agent that would answer any source",
+        "is a well-known default value and is refused",
+        "IPAddressDeny=any",
+        "snmpd: ALL",
+        "validate: >-",
+        "notify: Restart snmpd",
+        "Require the agent to answer the supplied credential",
+        "Require the agent to have discarded the plaintext passphrases",
+        "Require the agent to ignore the well-known default community",
+        "Require an enforcing source filter",
+        "SNMPCONFPATH",
+    }
+    absent = sorted(value for value in required if value not in role_text)
+    if absent:
+        raise AssertionError(f"Linux SNMP agent security boundary missing: {absent}")
+    forbidden = {
+        "rocommunity",
+        "rwcommunity",
+        "rwuser",
+        "MD5",
+        "DES",
+        "noAuthNoPriv",
+        "ignore_errors: true",
+        "no_log: false",
+        "-A\n",
+        "-X\n",
+    }
+    present = sorted(value for value in forbidden if value in role_text)
+    present += sorted(set(PRIVATE_ADDRESS.findall(role_text)))
+    if present:
+        raise AssertionError(f"unsafe Linux SNMP agent pattern present: {present}")
+
+    public_text = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in sorted(LINUX_SNMP_AGENT_REQUIRED_FILES)
+    )
+    leaks = sorted(set(PRIVATE_ADDRESS.findall(public_text)))
+    if leaks:
+        raise AssertionError(f"private address in public SNMP agent content: {leaks}")
+
+    scenario = load_unique_yaml(ROOT / "molecule/linux_snmp_agent/molecule.yml")
+    if scenario["scenario"]["test_sequence"] != [
+        "destroy",
+        "create",
+        "prepare",
+        "converge",
+        "idempotence",
+        "verify",
+        "destroy",
+    ]:
+        raise AssertionError("SNMP agent scenario must converge, prove idempotence and verify")
+    verify = (ROOT / "molecule/linux_snmp_agent/verify.yml").read_text(encoding="utf-8")
+    cases = {
+        "the allowed poller reads sysName with the right SNMPv3 credential",
+        "the allowed poller is refused with a wrong SNMPv3 passphrase",
+        "a non-allowed source gets no answer even with the right SNMPv3 credential",
+        "the allowed poller gets no answer for the well-known community",
+        "the allowed poller is refused with the superseded credential",
+        "the allowed poller gets no answer over SNMPv1 with the right community",
+        "a non-allowed source gets no answer even with the right community",
+        "firewalld alone drops a non-allowed source",
+        "no poller sources",
+        "every source as one CIDR",
+        "the default community public",
+        "the default community private in another letter case",
+        "SNMPv2c without a community",
+        "no TCP wrappers, no systemd IP filter and no active firewall",
+        "a drop-in that grants access",
+        "Require that no SNMPv3 passphrase is stored or logged",
+        "the allowed poller gets no answer after removal",
+    }
+    missing_cases = sorted(value for value in cases if value not in verify)
+    if missing_cases:
+        raise AssertionError(f"SNMP agent scenario coverage missing: {missing_cases}")
+
+
 def check_integrated_catalog_only() -> None:
     catalog = (ROOT / "catalog/remote-access-ssh-ca.yml").read_text(encoding="utf-8")
     if "direct_wrappers_catalog_eligible: false" not in catalog:
@@ -757,6 +944,7 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
     molecule_required = {
         "--require-hashes -r requirements-ci.lock",
         "--collections-path .collections --requirements-file requirements.yml",
+        '"molecule/${MOLECULE_SCENARIO}/molecule.yml"',
         'test "${#platform_images[@]}" -eq 4',
         "docker info",
         "--requirements-file molecule/preflight/collections.yml",
@@ -768,7 +956,7 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         raise AssertionError(f"Molecule quality gate missing: {missing}")
     if jobs["molecule-systemd-sshd"].get("strategy") != {
         "fail-fast": False,
-        "matrix": {"scenario": ["preflight"]},
+        "matrix": {"scenario": list(MOLECULE_DOCKER_SCENARIOS)},
     }:
         raise AssertionError("Molecule scenario matrix differs from the reviewed set")
 
@@ -788,20 +976,32 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
         raise AssertionError(
             f"Molecule Docker driver collections are not exactly pinned: {pinned}"
         )
-    scenario = (ROOT / "molecule/preflight/molecule.yml").read_text(encoding="utf-8")
-    platforms = load_unique_yaml(ROOT / "molecule/preflight/molecule.yml")["platforms"]
-    for platform in platforms:
-        if (
-            not re.fullmatch(r"docker\.io/[a-z0-9/_.-]+@sha256:[0-9a-f]{64}", platform["image"])
-            or platform.get("pre_build_image") is not True
-        ):
+    for name in MOLECULE_DOCKER_SCENARIOS:
+        scenario = (ROOT / f"molecule/{name}/molecule.yml").read_text(encoding="utf-8")
+        platforms = load_unique_yaml(ROOT / f"molecule/{name}/molecule.yml")["platforms"]
+        for platform in platforms:
+            if (
+                not re.fullmatch(
+                    r"docker\.io/[a-z0-9/_.-]+@sha256:[0-9a-f]{64}", platform["image"]
+                )
+                or platform.get("pre_build_image") is not True
+            ):
+                raise AssertionError(
+                    "Molecule platform must run its digest-pinned image unmodified: "
+                    f"{platform['name']}"
+                )
+        if "ansible_become" in scenario:
             raise AssertionError(
-                f"Molecule platform must run its digest-pinned image unmodified: {platform['name']}"
+                "Molecule fixtures must escalate through sudo like a managed host"
             )
-    if "ansible_become" in scenario:
-        raise AssertionError(
-            "Molecule fixtures must escalate through sudo like a managed host"
-        )
+        if len(platforms) != 4:
+            raise AssertionError(
+                f"Molecule {name} platform matrix differs from the reviewed set"
+            )
+        if "collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections" not in scenario:
+            raise AssertionError(
+                f"Molecule {name} scenario must resolve only the reviewed collections"
+            )
     verify = (ROOT / "molecule/preflight/verify.yml").read_text(encoding="utf-8")
     rejection_cases = {
         "a second Include in the stock drop-in",
@@ -823,13 +1023,6 @@ def check_ci_boundary(workflow_path: Path | None = None) -> None:
     missing = sorted(value for value in rejection_cases if value not in verify)
     if missing:
         raise AssertionError(f"stock Include allowance coverage missing: {missing}")
-    if len(platforms) != 4:
-        raise AssertionError("Molecule preflight platform matrix differs from the reviewed set")
-    if "collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections" not in scenario:
-        raise AssertionError(
-            "Molecule preflight scenario must resolve only the reviewed collections"
-        )
-
     requirements = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
     lock = (ROOT / "requirements-ci.lock").read_text(encoding="utf-8")
     if "pyyaml==6.0.3" not in requirements or "pyyaml==6.0.3" not in lock:
@@ -856,6 +1049,7 @@ def main() -> None:
     check_linux_trusted_ca()
     check_proxmox_inventory()
     check_fleet_ssh_enroll()
+    check_linux_snmp_agent()
     check_integrated_catalog_only()
     check_ci_boundary()
     print("repository contract checks passed")

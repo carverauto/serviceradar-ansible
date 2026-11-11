@@ -1,0 +1,50 @@
+---
+# Test credentials are generated for this run only, on the Molecule
+# controller, and never enter the repository.
+- name: Generate throwaway SNMP credentials for this run
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Write one random value per credential
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+        dest: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/snmp-{{ item }}"
+        mode: "0600"
+      loop:
+        - v3-auth-initial
+        - v3-priv-initial
+        - v3-auth-rotated
+        - v3-priv-rotated
+        - v3-auth-wrong
+        - v2c-community
+        - v2c-community-wrong
+      no_log: true
+
+- name: Prepare systemd fixtures
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Refresh the fixture package index, which the images ship empty
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install the host firewall this fixture is expected to already run
+      ansible.builtin.package:
+        name: "{{ molecule_firewall }}"
+        state: present
+      when: molecule_firewall != 'none'
+
+    - name: Start firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld
+        enabled: true
+        state: started
+      when: molecule_firewall == 'firewalld'
+
+    - name: Activate ufw
+      ansible.builtin.command:
+        argv: [ufw, --force, enable]
+      changed_when: true
+      when: molecule_firewall == 'ufw'

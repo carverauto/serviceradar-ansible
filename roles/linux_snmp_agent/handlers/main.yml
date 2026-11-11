@@ -1,0 +1,11 @@
+---
+- name: Reload systemd units for snmpd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: Reload systemd units for snmpd
+
+- name: Restart snmpd
+  ansible.builtin.systemd_service:
+    name: "{{ linux_snmp_agent_service_name }}"
+    state: restarted
+  listen: Restart snmpd

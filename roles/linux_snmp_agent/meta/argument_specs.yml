@@ -1,0 +1,70 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure a source-restricted, read-only snmpd for ServiceRadar polling.
+    options:
+      linux_snmp_agent_state:
+        type: str
+        choices: [present, absent]
+        default: present
+      linux_snmp_agent_mode:
+        type: str
+        choices: [v3, v2c]
+        default: v3
+      linux_snmp_agent_v3_user:
+        type: str
+        no_log: true
+      linux_snmp_agent_v3_auth_passphrase:
+        type: str
+        no_log: true
+      linux_snmp_agent_v3_priv_passphrase:
+        type: str
+        no_log: true
+      linux_snmp_agent_v2c_community:
+        type: str
+        no_log: true
+      linux_snmp_agent_v3_auth_protocol:
+        type: str
+        choices: [SHA-256, SHA-384, SHA-512]
+        default: SHA-256
+      linux_snmp_agent_poller_sources:
+        type: list
+        elements: str
+        required: true
+      linux_snmp_agent_bind_address:
+        type: str
+        default: 0.0.0.0
+      linux_snmp_agent_port:
+        type: int
+        default: 161
+      linux_snmp_agent_view_oids:
+        type: list
+        elements: str
+      linux_snmp_agent_view_extra_oids:
+        type: list
+        elements: str
+        default: []
+      linux_snmp_agent_view_excluded_oids:
+        type: list
+        elements: str
+      linux_snmp_agent_sys_location:
+        type: str
+        default: ""
+      linux_snmp_agent_sys_contact:
+        type: str
+        default: ""
+      linux_snmp_agent_include_dropin_dir:
+        type: bool
+        default: false
+      linux_snmp_agent_systemd_ip_filter:
+        type: bool
+        default: true
+      linux_snmp_agent_manage_firewall:
+        type: bool
+        default: true
+      linux_snmp_agent_firewalld_zone:
+        type: str
+        default: ""
+      linux_snmp_agent_remove_package:
+        type: bool
+        default: false

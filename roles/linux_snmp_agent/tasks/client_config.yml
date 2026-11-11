@@ -1,0 +1,50 @@
+---
+# Passphrases on a command line are visible to every local user through the
+# process table. The queries read them from root-only files on tmpfs instead;
+# present.yml removes the directory even when the run fails.
+- name: Create the root-only temporary client directories
+  ansible.builtin.file:
+    path: "{{ linux_snmp_agent_client_dir }}{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: ["", /allowed, /denied, /anonymous, /state]
+  changed_when: false
+
+- name: Write the client configuration for an allowed loopback query
+  ansible.builtin.template:
+    src: client-snmp.conf.j2
+    dest: "{{ linux_snmp_agent_client_dir }}/allowed/snmp.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+  changed_when: false
+
+- name: Write the client configuration for a query from a source that is not allowed
+  ansible.builtin.template:
+    src: client-snmp.conf.j2
+    dest: "{{ linux_snmp_agent_client_dir }}/denied/snmp.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    linux_snmp_agent_client_source: "{{ linux_snmp_agent_denied_probe_source }}"
+  diff: false
+  no_log: true
+  changed_when: false
+
+- name: Write the empty client configuration for the well-known community query
+  ansible.builtin.template:
+    src: client-snmp.conf.j2
+    dest: "{{ linux_snmp_agent_client_dir }}/anonymous/snmp.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    linux_snmp_agent_client_anonymous: true
+  diff: false
+  no_log: true
+  changed_when: false

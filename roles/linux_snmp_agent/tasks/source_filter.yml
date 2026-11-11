@@ -1,0 +1,63 @@
+---
+- name: Detect TCP wrappers support in the agent binary
+  ansible.builtin.command:
+    argv: [ldd, "{{ linux_snmp_agent_daemon_path }}"]
+  register: linux_snmp_agent_ldd
+  changed_when: false
+  check_mode: false
+
+- name: Record whether the agent honours TCP wrappers
+  ansible.builtin.set_fact:
+    linux_snmp_agent_tcp_wrappers: "{{ 'libwrap' in linux_snmp_agent_ldd.stdout }}"
+
+- name: Allow only loopback and the poller sources through TCP wrappers
+  ansible.builtin.blockinfile:
+    path: /etc/hosts.allow
+    marker: "{{ linux_snmp_agent_wrappers_marker }}"
+    block: "snmpd: {{ (['127.0.0.1'] + linux_snmp_agent_source_wrappers) | join(', ') }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: linux_snmp_agent_tcp_wrappers
+
+- name: Deny every other source through TCP wrappers
+  ansible.builtin.blockinfile:
+    path: /etc/hosts.deny
+    marker: "{{ linux_snmp_agent_wrappers_marker }}"
+    block: "snmpd: ALL"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: linux_snmp_agent_tcp_wrappers
+
+- name: Ensure the snmpd.service drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ linux_snmp_agent_unit_dropin_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: linux_snmp_agent_systemd_ip_filter
+
+- name: Allow only loopback and the poller sources through the systemd IP filter
+  ansible.builtin.template:
+    src: source-filter.conf.j2
+    dest: "{{ linux_snmp_agent_unit_dropin_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd units for snmpd
+    - Restart snmpd
+  when: linux_snmp_agent_systemd_ip_filter
+
+- name: Remove the systemd IP filter when it is disabled
+  ansible.builtin.file:
+    path: "{{ linux_snmp_agent_unit_dropin_path }}"
+    state: absent
+  notify:
+    - Reload systemd units for snmpd
+    - Restart snmpd
+  when: not linux_snmp_agent_systemd_ip_filter

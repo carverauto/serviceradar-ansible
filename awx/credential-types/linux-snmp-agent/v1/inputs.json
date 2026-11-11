@@ -1,0 +1,33 @@
+{
+  "fields": [
+    {
+      "id": "v3_user",
+      "label": "SNMPv3 user name",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "v3_auth_passphrase",
+      "label": "SNMPv3 authentication passphrase",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "v3_priv_passphrase",
+      "label": "SNMPv3 privacy passphrase",
+      "type": "string",
+      "secret": true
+    },
+    {
+      "id": "v2c_community",
+      "label": "SNMPv2c community (only for the explicit v2c mode)",
+      "type": "string",
+      "secret": true
+    }
+  ],
+  "required": [
+    "v3_user",
+    "v3_auth_passphrase",
+    "v3_priv_passphrase"
+  ]
+}

@@ -1,12 +1,13 @@
 # serviceradar-ansible
 
 Public Apache-2.0 automation for ServiceRadar operators. This repository now
-contains five independent content families:
+contains six independent content families:
 
 - Transactional Linux SSH user-CA enrollment for ServiceRadar remote access.
 - Trusted QEMU Guest Agent installation for Windows Proxmox/QEMU guests.
 - Fingerprint-pinned Linux system CA trust for private HTTPS integrations.
 - CA-verified Proxmox dynamic inventory for cluster-scoped ServiceRadar import.
+- A source-restricted, read-only SNMP agent on Linux hosts for ServiceRadar polling.
 - Existing ServiceRadar agent installation and AWX connectivity playbooks.
 
 Repository CI is the GitHub Actions workflow
@@ -128,6 +129,43 @@ public CA inputs immutable in a reviewed AWX job template, disable prompting
 for them, and launch the template from ServiceRadar rather than directly in AWX,
 against the exact canonical device limit. See the
 [role interface](roles/linux_trusted_ca/README.md).
+
+## Linux SNMP agent for ServiceRadar polling
+
+`install-linux-snmp-agent.yml` installs and configures the distribution `snmpd`
+on Debian 12, Ubuntu 22.04/24.04 and Rocky Linux 9 hosts, as VMs or LXC
+containers, so that a ServiceRadar agent can poll them. SNMPv3 with
+authentication and privacy (SHA-256 or stronger, AES) is the default. SNMPv2c
+is an explicit, read-only opt-in that has no default community and refuses
+well-known ones such as `public`.
+
+The SNMP secret is never set in this repository, an inventory, a survey, or
+job-template extra variables. Create the custom credential type from
+[`inputs.json`](awx/credential-types/linux-snmp-agent/v1/inputs.json) and
+[`injectors.json`](awx/credential-types/linux-snmp-agent/v1/injectors.json),
+store the SNMPv3 user and passphrases in a credential of that type, and attach
+it to the job template. AWX encrypts the values at rest and injects them into
+the job's environment at launch; the role reads them there and logs none of
+them. ServiceRadar polls with its own, separate credential store, so enter the
+same values in ServiceRadar's credential settings as well.
+
+The one required variable is `linux_snmp_agent_poller_sources`, the IPv4
+addresses or CIDRs of the ServiceRadar agents that poll the host:
+
+```yaml
+linux_snmp_agent_poller_sources:
+  - 192.0.2.10
+  - 198.51.100.0/28
+```
+
+The role refuses an empty or over-broad source list. It restricts the agent
+to those sources with TCP wrappers, a systemd IP filter and, when firewalld or
+ufw is already active, firewall rules; it does not install a firewall. Every
+run then queries the local agent with the supplied credential, and fails and
+stops the agent if it answers a source outside the list or the community
+`public`. `linux_snmp_agent_state: absent` removes the configuration. See the
+[role interface](roles/linux_snmp_agent/README.md) for the inputs, the AWX
+steps, passphrase rotation and the container limits.
 
 ## Fleet SSH-CA enrollment (serviceradar#4376)
 

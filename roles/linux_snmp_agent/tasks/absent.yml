@@ -1,0 +1,115 @@
+---
+- name: Read what an earlier run recorded
+  ansible.builtin.include_tasks: read_state.yml
+
+- name: Remove the firewall rules this role added
+  ansible.builtin.include_tasks: firewall.yml
+
+- name: Check whether the agent is installed
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_daemon_path }}"
+  register: linux_snmp_agent_daemon
+
+# snmpd rewrites its persistent file on exit, so it is stopped before the
+# SNMPv3 user is removed from that file.
+- name: Stop and disable the agent
+  ansible.builtin.systemd_service:
+    name: "{{ linux_snmp_agent_service_name }}"
+    state: stopped
+    enabled: false
+  when: linux_snmp_agent_daemon.stat.exists
+
+- name: Check for the agent's persistent store
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_platform.persistent_file }}"
+  register: linux_snmp_agent_persistent_file
+
+- name: Remove the SNMPv3 user from the persistent store
+  ansible.builtin.lineinfile:
+    path: "{{ linux_snmp_agent_platform.persistent_file }}"
+    regexp: "{{ linux_snmp_agent_v3_user_line_pattern }}"
+    state: absent
+  diff: false
+  no_log: true
+  when:
+    - linux_snmp_agent_persistent_file.stat.exists
+    - linux_snmp_agent_v3_user | length > 0
+
+- name: Remove the systemd IP filter
+  ansible.builtin.file:
+    path: "{{ linux_snmp_agent_unit_dropin_path }}"
+    state: absent
+  notify: Reload systemd units for snmpd
+
+- name: Check for TCP wrappers files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: [/etc/hosts.allow, /etc/hosts.deny]
+  register: linux_snmp_agent_wrappers_files
+
+- name: Remove the TCP wrappers rules this role added
+  ansible.builtin.blockinfile:
+    path: "{{ item.item }}"
+    marker: "{{ linux_snmp_agent_wrappers_marker }}"
+    state: absent
+  loop: "{{ linux_snmp_agent_wrappers_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: Check for the configuration kept from before the first run
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_config_backup_path }}"
+  register: linux_snmp_agent_config_backup
+
+- name: Restore the configuration kept from before the first run
+  ansible.builtin.copy:
+    src: "{{ linux_snmp_agent_config_backup_path }}"
+    dest: "{{ linux_snmp_agent_config_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+  when:
+    - linux_snmp_agent_config_backup.stat.exists
+    - linux_snmp_agent_state_file.stat.exists
+
+- name: Remove the managed configuration when there is nothing to restore
+  ansible.builtin.file:
+    path: "{{ linux_snmp_agent_config_path }}"
+    state: absent
+  when:
+    - not linux_snmp_agent_config_backup.stat.exists
+    - linux_snmp_agent_state_file.stat.exists
+
+- name: Remove the role's record, kept copy and temporary files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ linux_snmp_agent_config_backup_path }}"
+    - "{{ linux_snmp_agent_state_path }}"
+    - "{{ linux_snmp_agent_client_dir }}"
+
+- name: Remove the distribution agent package and its persistent store
+  when: linux_snmp_agent_remove_package
+  block:
+    - name: Purge the agent package with apt
+      ansible.builtin.apt:
+        name: "{{ linux_snmp_agent_platform.daemon_package }}"
+        state: absent
+        purge: true
+      when: ansible_facts.os_family == 'Debian'
+
+    - name: Remove the agent package with dnf
+      ansible.builtin.dnf:
+        name: "{{ linux_snmp_agent_platform.daemon_package }}"
+        state: absent
+      when: ansible_facts.os_family == 'RedHat'
+
+    - name: Remove the persistent SNMPv3 user store
+      ansible.builtin.file:
+        path: "{{ linux_snmp_agent_platform.persistent_file }}"
+        state: absent

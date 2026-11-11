@@ -1,0 +1,50 @@
+---
+- name: Fail closed outside the supported platforms
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.service_mgr == 'systemd'
+      - >-
+        (ansible_facts.distribution == 'Debian' and ansible_facts.distribution_major_version == '12')
+        or (ansible_facts.distribution == 'Ubuntu' and ansible_facts.distribution_version in ['22.04', '24.04'])
+        or (ansible_facts.os_family == 'RedHat' and ansible_facts.distribution_major_version == '9')
+    fail_msg: >-
+      linux_snmp_agent supports Debian 12, Ubuntu 22.04/24.04 and Enterprise
+      Linux 9 with systemd. Refusing to change {{ inventory_hostname }}.
+
+- name: Reject invalid non-secret inputs
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_input_errors | length == 0
+    fail_msg: "{{ linux_snmp_agent_input_errors | join(' ') }}"
+
+# A defence against a regression in the normalization itself: nothing but a
+# canonical IPv4 CIDR may reach the configuration, the filters or a firewall.
+- name: Require canonical poller sources
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_source_cidrs | length > 0
+      - linux_snmp_agent_source_cidrs | length == linux_snmp_agent_source_wrappers | length
+      - >-
+        linux_snmp_agent_source_cidrs
+        | reject('match', '^[0-9]{1,3}(\.[0-9]{1,3}){3}/(?:[89]|[12][0-9]|3[0-2])$') | list | length == 0
+      - >-
+        linux_snmp_agent_source_wrappers
+        | reject('match', '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,3}(\.[0-9]{1,3}){3})?$') | list | length == 0
+    fail_msg: The poller sources did not normalize to canonical IPv4 CIDRs. This is a defect in the role.
+  when: linux_snmp_agent_state == 'present'
+
+# The credential is inspected with no_log; only fixed sentences that describe
+# the problem, never a value, are kept for the next task to report.
+- name: Inspect the credential without logging it
+  ansible.builtin.set_fact:
+    linux_snmp_agent_credential_problems: "{{ linux_snmp_agent_secret_errors }}"
+  no_log: true
+
+- name: Reject an invalid or missing credential
+  ansible.builtin.assert:
+    that:
+      - linux_snmp_agent_credential_problems | length == 0
+    fail_msg: >-
+      {{ linux_snmp_agent_credential_problems | join(' ') }}
+      Supply the values through the AWX credential type
+      awx/credential-types/linux-snmp-agent/v1; see the role README.

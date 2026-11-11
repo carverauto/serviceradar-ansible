@@ -1,0 +1,35 @@
+---
+# Run the role with one deliberately bad input and require that the named
+# task, and no other, refuses it with the expected explanation.
+- name: "Run the role expecting rejection: {{ rejection.case }}"
+  block:
+    - name: "Run the role: {{ rejection.case }}"
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_mode: "{{ rejection.mode | default('v3') }}"
+        linux_snmp_agent_poller_sources: "{{ rejection.sources | default(molecule_poller_sources) }}"
+        linux_snmp_agent_v3_auth_passphrase: "{{ rejection.auth | default(molecule_v3_auth) }}"
+        linux_snmp_agent_v2c_community: "{{ rejection.community | default('') }}"
+        linux_snmp_agent_systemd_ip_filter: "{{ rejection.systemd_ip_filter | default(molecule_systemd_ip_filter) }}"
+        linux_snmp_agent_include_dropin_dir: "{{ rejection.include_dropin_dir | default(false) }}"
+
+    - name: "Record that the role accepted the input: {{ rejection.case }}"
+      ansible.builtin.set_fact:
+        molecule_rejection_task: accepted
+        molecule_rejection_message: ""
+  rescue:
+    - name: "Record the rejecting task: {{ rejection.case }}"
+      ansible.builtin.set_fact:
+        molecule_rejection_task: "{{ ansible_failed_task.name }}"
+        molecule_rejection_message: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: "Require the expected rejection: {{ rejection.case }}"
+  ansible.builtin.assert:
+    that:
+      - molecule_rejection_task == rejection.task
+      - rejection.message in molecule_rejection_message
+    fail_msg: >-
+      {{ rejection.case }}: expected the task "{{ rejection.task }}" to refuse
+      with "{{ rejection.message }}", observed "{{ molecule_rejection_task }}"
+      saying "{{ molecule_rejection_message }}".

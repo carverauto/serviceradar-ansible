@@ -33,6 +33,21 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   principals, proof-gated sshd reload) plus a controller-local known_hosts
   fragment collector for serviceradar#4376. Secrets travel only via
   ansible-vault, environment, or per-run extra vars.
+- A `linux_snmp_agent` role and `install-linux-snmp-agent.yml` wrapper that
+  install and configure a read-only `snmpd` on Debian 12, Ubuntu 22.04/24.04
+  and Rocky Linux 9 for ServiceRadar polling: SNMPv3 authPriv by default,
+  SNMPv2c only as an explicit opt-in that refuses well-known communities, a
+  required poller source list enforced by TCP wrappers, a systemd IP filter
+  and an already active firewalld or ufw, configuration validation before
+  restart, a local query that proves the credential and the source filter on
+  every run, and a removal path.
+- A versioned `linux-snmp-agent` AWX credential type that holds the SNMPv3
+  user and passphrases and the optional SNMPv2c community as secret inputs
+  and injects them into the job environment.
+- A `linux_snmp_agent` Molecule scenario on the four pinned systemd fixtures
+  covering idempotence, allowed and non-allowed peers, wrong credentials,
+  passphrase rotation, the SNMPv2c opt-in, the refusal cases, the firewall
+  rules and removal.
 
 ### Changed
 
@@ -40,6 +55,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   `main`, on secretless GitHub-hosted `ubuntu-24.04` runners with actions
   pinned to full commits. The repository contract checks now validate that
   workflow instead of the retired Forgejo one.
+- Run the Molecule job once per scenario (`preflight`, `linux_snmp_agent`) and
+  record the platform images of the scenario being run.
 - Pin the collections the Molecule Docker driver needs in
   `molecule/preflight/collections.yml`; the retired runner carried them
   preinstalled and nothing in the repository declared them.
