@@ -18,24 +18,108 @@ want_proxmox_nodes_ansible_host: true
 qemu_extended_statuses: true
 strict: false
 
+# Management address selection. Proxmox knows which virtual NIC it gave each
+# guest: the lowest-numbered netN in the guest's configuration carries that
+# NIC's MAC. The address is read from the guest interface that reports the
+# same MAC, never from whichever interface the guest happens to list first.
+#
+#   ansible_host                   the address chosen below
+#   serviceradar_address_source    guest_agent_primary_nic, lxc_config,
+#                                  lxc_interface, plugin_default or none
+#   serviceradar_primary_mac       lower-case MAC of the primary NIC, or ''
+#   serviceradar_uuid_map_address  entry of the reviewed UUID map for this
+#                                  guest; it is used when the source is
+#                                  plugin_default or none
+#
+# A compose entry cannot read another composed variable, so the shared
+# fragments are repeated. Do not edit the block by hand: change
+# scripts/render_proxmox_address_compose.py and run it with --write.
+# BEGIN rendered by scripts/render_proxmox_address_compose.py
 compose:
   ansible_host: >-
-    (proxmox_agent_interfaces | default([])
-       | rejectattr('name', 'equalto', 'lo')
-       | map(attribute='ip-addresses') | flatten
-       | map('regex_replace', '/.*$', '')
-       | reject('search', ':')
-       | list | first | default(None))
-    or (proxmox_lxc_interfaces | default([])
-          | rejectattr('name', 'equalto', 'lo')
-          | map(attribute='inet') | reject('equalto', None)
-          | map('regex_replace', '/.*$', '')
-          | reject('search', ':')
-          | list | first | default(None))
-    or ((lookup('ansible.builtin.env', 'SERVICERADAR_PROXMOX_UUID_ADDRESSES')
-          | default('{}', true) | from_json)
-         .get((proxmox_smbios1 | default({})).get('uuid'), None))
-    or ansible_host
+    ([proxmox_agent_interfaces | default([])] | flatten | select('mapping') | selectattr('name',
+    'string') | selectattr('mac-address', 'string') | selectattr('mac-address', 'match', ('(?i)^' ~
+    ((([proxmox_net0, proxmox_net1, proxmox_net2, proxmox_net3, proxmox_net4, proxmox_net5,
+    proxmox_net6, proxmox_net7, proxmox_net8, proxmox_net9, proxmox_net10, proxmox_net11,
+    proxmox_net12, proxmox_net13, proxmox_net14, proxmox_net15, proxmox_net16, proxmox_net17,
+    proxmox_net18, proxmox_net19, proxmox_net20, proxmox_net21, proxmox_net22, proxmox_net23,
+    proxmox_net24, proxmox_net25, proxmox_net26, proxmox_net27, proxmox_net28, proxmox_net29,
+    proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string) |
+    regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True)) |
+    default('(?!)', true)) ~ '$')) | sort(attribute='name') | map(attribute='ip-addresses',
+    default=[]) | flatten | map('string') | map('regex_replace', '/.*$', '') | select('match',
+    '^[0-9]+([.][0-9]+){3}$') | reject('match', '^(127|169[.]254)[.]') | first | default('')) or
+    ((([proxmox_net0, proxmox_net1, proxmox_net2, proxmox_net3, proxmox_net4, proxmox_net5,
+    proxmox_net6, proxmox_net7, proxmox_net8, proxmox_net9, proxmox_net10, proxmox_net11,
+    proxmox_net12, proxmox_net13, proxmox_net14, proxmox_net15, proxmox_net16, proxmox_net17,
+    proxmox_net18, proxmox_net19, proxmox_net20, proxmox_net21, proxmox_net22, proxmox_net23,
+    proxmox_net24, proxmox_net25, proxmox_net26, proxmox_net27, proxmox_net28, proxmox_net29,
+    proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string) |
+    regex_search("(?:^|[{, ])'?ip'?[=:] ?'?[0-9]+(?:[.][0-9]+){3}(?=[/,']|$)") | default('', true) |
+    regex_search('[0-9]+(?:[.][0-9]+){3}$') | default('', true)) if (proxmox_vmtype | default(''))
+    == 'lxc' else '') or ([proxmox_lxc_interfaces | default([])] | flatten | select('mapping') |
+    selectattr('name', 'string') | selectattr('hwaddr', 'string') | selectattr('hwaddr', 'match',
+    ('(?i)^' ~ ((([proxmox_net0, proxmox_net1, proxmox_net2, proxmox_net3, proxmox_net4,
+    proxmox_net5, proxmox_net6, proxmox_net7, proxmox_net8, proxmox_net9, proxmox_net10,
+    proxmox_net11, proxmox_net12, proxmox_net13, proxmox_net14, proxmox_net15, proxmox_net16,
+    proxmox_net17, proxmox_net18, proxmox_net19, proxmox_net20, proxmox_net21, proxmox_net22,
+    proxmox_net23, proxmox_net24, proxmox_net25, proxmox_net26, proxmox_net27, proxmox_net28,
+    proxmox_net29, proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string)
+    | regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True))
+    | default('(?!)', true)) ~ '$')) | sort(attribute='name') | map(attribute='inet', default='') |
+    map('string') | map('regex_replace', '/.*$', '') | select('match', '^[0-9]+([.][0-9]+){3}$') |
+    reject('match', '^(127|169[.]254)[.]') | first | default('')) or ((lookup('ansible.builtin.env',
+    'SERVICERADAR_PROXMOX_UUID_ADDRESSES') | default('{}', true) | from_json).get((proxmox_smbios1 |
+    default({})).get('uuid'), None)) or ansible_host
+  serviceradar_address_source: >-
+    'guest_agent_primary_nic' if ([proxmox_agent_interfaces | default([])] | flatten |
+    select('mapping') | selectattr('name', 'string') | selectattr('mac-address', 'string') |
+    selectattr('mac-address', 'match', ('(?i)^' ~ ((([proxmox_net0, proxmox_net1, proxmox_net2,
+    proxmox_net3, proxmox_net4, proxmox_net5, proxmox_net6, proxmox_net7, proxmox_net8,
+    proxmox_net9, proxmox_net10, proxmox_net11, proxmox_net12, proxmox_net13, proxmox_net14,
+    proxmox_net15, proxmox_net16, proxmox_net17, proxmox_net18, proxmox_net19, proxmox_net20,
+    proxmox_net21, proxmox_net22, proxmox_net23, proxmox_net24, proxmox_net25, proxmox_net26,
+    proxmox_net27, proxmox_net28, proxmox_net29, proxmox_net30, proxmox_net31] | select('defined') |
+    first | default('') | string) |
+    regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True)) |
+    default('(?!)', true)) ~ '$')) | sort(attribute='name') | map(attribute='ip-addresses',
+    default=[]) | flatten | map('string') | map('regex_replace', '/.*$', '') | select('match',
+    '^[0-9]+([.][0-9]+){3}$') | reject('match', '^(127|169[.]254)[.]') | first | default('')) else
+    'lxc_config' if ((([proxmox_net0, proxmox_net1, proxmox_net2, proxmox_net3, proxmox_net4,
+    proxmox_net5, proxmox_net6, proxmox_net7, proxmox_net8, proxmox_net9, proxmox_net10,
+    proxmox_net11, proxmox_net12, proxmox_net13, proxmox_net14, proxmox_net15, proxmox_net16,
+    proxmox_net17, proxmox_net18, proxmox_net19, proxmox_net20, proxmox_net21, proxmox_net22,
+    proxmox_net23, proxmox_net24, proxmox_net25, proxmox_net26, proxmox_net27, proxmox_net28,
+    proxmox_net29, proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string)
+    | regex_search("(?:^|[{, ])'?ip'?[=:] ?'?[0-9]+(?:[.][0-9]+){3}(?=[/,']|$)") | default('', true)
+    | regex_search('[0-9]+(?:[.][0-9]+){3}$') | default('', true)) if (proxmox_vmtype | default(''))
+    == 'lxc' else '') else 'lxc_interface' if ([proxmox_lxc_interfaces | default([])] | flatten |
+    select('mapping') | selectattr('name', 'string') | selectattr('hwaddr', 'string') |
+    selectattr('hwaddr', 'match', ('(?i)^' ~ ((([proxmox_net0, proxmox_net1, proxmox_net2,
+    proxmox_net3, proxmox_net4, proxmox_net5, proxmox_net6, proxmox_net7, proxmox_net8,
+    proxmox_net9, proxmox_net10, proxmox_net11, proxmox_net12, proxmox_net13, proxmox_net14,
+    proxmox_net15, proxmox_net16, proxmox_net17, proxmox_net18, proxmox_net19, proxmox_net20,
+    proxmox_net21, proxmox_net22, proxmox_net23, proxmox_net24, proxmox_net25, proxmox_net26,
+    proxmox_net27, proxmox_net28, proxmox_net29, proxmox_net30, proxmox_net31] | select('defined') |
+    first | default('') | string) |
+    regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True)) |
+    default('(?!)', true)) ~ '$')) | sort(attribute='name') | map(attribute='inet', default='') |
+    map('string') | map('regex_replace', '/.*$', '') | select('match', '^[0-9]+([.][0-9]+){3}$') |
+    reject('match', '^(127|169[.]254)[.]') | first | default('')) else 'plugin_default' if
+    (ansible_host | default('', true)) else 'none'
+  serviceradar_primary_mac: >-
+    (([proxmox_net0, proxmox_net1, proxmox_net2, proxmox_net3, proxmox_net4, proxmox_net5,
+    proxmox_net6, proxmox_net7, proxmox_net8, proxmox_net9, proxmox_net10, proxmox_net11,
+    proxmox_net12, proxmox_net13, proxmox_net14, proxmox_net15, proxmox_net16, proxmox_net17,
+    proxmox_net18, proxmox_net19, proxmox_net20, proxmox_net21, proxmox_net22, proxmox_net23,
+    proxmox_net24, proxmox_net25, proxmox_net26, proxmox_net27, proxmox_net28, proxmox_net29,
+    proxmox_net30, proxmox_net31] | select('defined') | first | default('') | string) |
+    regex_search('(?<![0-9a-f:.])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:.])', ignorecase=True)) |
+    default('', true) | lower
+  serviceradar_uuid_map_address: >-
+    ((lookup('ansible.builtin.env', 'SERVICERADAR_PROXMOX_UUID_ADDRESSES') | default('{}', true) |
+    from_json).get((proxmox_smbios1 | default({})).get('uuid'), None)) | default('', true)
+# END rendered by scripts/render_proxmox_address_compose.py
 
 filters:
   - "proxmox_status == 'running'"
@@ -55,3 +139,8 @@ groups:
   windows: >-
     proxmox_vmtype == 'qemu' and proxmox_ostype is defined
     and proxmox_ostype is match('^w')
+  # Guests with no management address from any source. Target or exclude it
+  # explicitly; such a host has no ansible_host at all.
+  address_unresolved: >-
+    (serviceradar_address_source | default('none')) == 'none'
+    and not (serviceradar_uuid_map_address | default('', true))
