@@ -120,6 +120,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
   variable is now ignored. A QEMU guest needs a working QEMU Guest Agent to be
   addressed; `address_unresolved` depends on `serviceradar_address_source`
   alone.
+- The `proxmox-api-token-ca-connect-relay` AWX credential type, its repository
+  contract checks, and the documentation for routing the Proxmox inventory
+  sync through an HTTPS CONNECT relay. The inventory reaches the Proxmox API
+  directly with the `proxmox-api-token-ca` credential type, and the repository
+  contract checks now reject a proxy variable in that type's injectors.
+  Delete the relay credential type and its credentials from AWX, and retire
+  any proxy that served it.
 - The Forgejo workflow definitions, which no longer run, and the controlled
   public-runner isolation workflow, script, and runbook that tested the
   retired self-hosted runner.

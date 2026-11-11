@@ -187,12 +187,11 @@ Settings page.
 ## Proxmox dynamic inventory
 
 `inventory/proxmox.proxmox.yml` discovers running guests with TLS verification
-enabled. The published AWX custom credential types support either direct access
-or a restricted, non-intercepting HTTPS CONNECT relay. Both inject a least-
-privilege API token and a temporary `REQUESTS_CA_BUNDLE` file; neither belongs
-in git or inventory variables. Use one AWX inventory per Proxmox cluster so
-reused PVE hostnames and VMIDs remain distinct through ServiceRadar's
-controller/inventory/host identity.
+enabled. AWX reaches the Proxmox API directly. The published AWX custom
+credential type injects a least-privilege API token and a temporary
+`REQUESTS_CA_BUNDLE` file; neither belongs in git or inventory variables. Use
+one AWX inventory per Proxmox cluster so reused PVE hostnames and VMIDs remain
+distinct through ServiceRadar's controller/inventory/host identity.
 
 Each guest's management address is chosen from data Proxmox holds, with no
 per-host input: the guest interface whose MAC equals that of the guest's
