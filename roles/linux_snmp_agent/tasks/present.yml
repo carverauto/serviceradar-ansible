@@ -1,0 +1,78 @@
+---
+- name: Install the distribution SNMP agent and client tools with apt
+  ansible.builtin.apt:
+    name: "{{ linux_snmp_agent_platform.packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Install the distribution SNMP agent and client tools with dnf
+  ansible.builtin.dnf:
+    name: "{{ linux_snmp_agent_platform.packages }}"
+    state: present
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Check that the agent is installed
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_daemon_path }}"
+  register: linux_snmp_agent_daemon
+
+- name: Explain why a dry run stops here
+  ansible.builtin.debug:
+    msg: >-
+      snmpd is not installed yet, so check mode cannot validate a
+      configuration for it. A real run installs and configures it.
+  when:
+    - ansible_check_mode
+    - not linux_snmp_agent_daemon.stat.exists
+
+- name: End the dry run for a host without the agent
+  ansible.builtin.meta: end_host
+  when:
+    - ansible_check_mode
+    - not linux_snmp_agent_daemon.stat.exists
+
+- name: Read what an earlier run recorded
+  ansible.builtin.include_tasks: read_state.yml
+
+- name: Render and validate the agent configuration
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Restrict the agent to the poller sources
+  ansible.builtin.include_tasks: source_filter.yml
+
+- name: Open the host firewall for the poller sources only
+  ansible.builtin.include_tasks: firewall.yml
+
+- name: Provision the credential and prove the agent with a root-only client configuration
+  block:
+    - name: Write the temporary client configuration
+      ansible.builtin.include_tasks: client_config.yml
+      when: not ansible_check_mode
+
+    - name: Converge the SNMPv3 user
+      ansible.builtin.include_tasks: v3_user.yml
+      when:
+        - not ansible_check_mode
+        - linux_snmp_agent_mode == 'v3'
+
+    - name: Apply configuration changes before the agent is verified
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the agent
+      ansible.builtin.systemd_service:
+        name: "{{ linux_snmp_agent_service_name }}"
+        enabled: true
+        state: started
+
+    - name: Verify the agent and its source filter
+      ansible.builtin.include_tasks: verify.yml
+      when: not ansible_check_mode
+  always:
+    # The directory is ephemeral run state on tmpfs, not host configuration.
+    - name: Remove the temporary client configuration
+      ansible.builtin.file:
+        path: "{{ linux_snmp_agent_client_dir }}"
+        state: absent
+      changed_when: false

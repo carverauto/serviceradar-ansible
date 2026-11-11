@@ -15,6 +15,7 @@ python3 -m py_compile \
   scripts/content_digest.py \
   scripts/render_proxmox_address_compose.py \
   tests/test_awx_callback_credential_contract.py \
+  tests/test_linux_snmp_agent_role.py \
   tests/test_workflow_yaml_contract.py \
   tests/validate_repository.py
 bash -n roles/remote_access_ssh_ca/files/serviceradar-ssh-ca-rollback

@@ -1,0 +1,8 @@
+# Managed by the ServiceRadar Ansible role linux_snmp_agent.
+# snmpd may exchange packets only with loopback and the poller sources.
+[Service]
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+{% for cidr in linux_snmp_agent_source_cidrs %}
+IPAddressAllow={{ cidr }}
+{% endfor %}

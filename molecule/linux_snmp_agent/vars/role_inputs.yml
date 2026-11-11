@@ -1,0 +1,29 @@
+---
+# Role inputs shared by converge and verify. AWX supplies the secrets through
+# the credential type's environment injectors; here they are read from the
+# files prepare.yml generated for this run.
+molecule_secret_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+molecule_generation: "{{ molecule_credential_generation | default('initial') }}"
+molecule_v3_auth: >-
+  {{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v3-auth-' ~ molecule_generation) }}
+molecule_v3_priv: >-
+  {{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v3-priv-' ~ molecule_generation) }}
+molecule_v3_auth_wrong: "{{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v3-auth-wrong') }}"
+molecule_v2c_community: "{{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v2c-community') }}"
+molecule_v2c_community_wrong: "{{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v2c-community-wrong') }}"
+
+# The allowed peer's fixture address is only known at run time. The other
+# sources are documentation addresses that nothing in the scenario owns.
+molecule_poller_sources: >-
+  {{ [hostvars[molecule_allowed_peer].ansible_facts.default_ipv4.address]
+     + (molecule_extra_sources | default(['192.0.2.0/24', '198.51.100.7'])) }}
+molecule_target_address: "{{ ansible_facts.default_ipv4.address }}"
+molecule_poller_dir: "/run/molecule-poller/{{ inventory_hostname }}"
+
+linux_snmp_agent_v3_user: "{{ molecule_v3_user }}"
+linux_snmp_agent_v3_auth_passphrase: "{{ molecule_v3_auth }}"
+linux_snmp_agent_v3_priv_passphrase: "{{ molecule_v3_priv }}"
+linux_snmp_agent_poller_sources: "{{ molecule_poller_sources }}"
+linux_snmp_agent_systemd_ip_filter: "{{ molecule_systemd_ip_filter }}"
+linux_snmp_agent_sys_location: Rack 01, SITE01
+linux_snmp_agent_sys_contact: noc@example.com

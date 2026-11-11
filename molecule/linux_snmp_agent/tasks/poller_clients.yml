@@ -1,0 +1,61 @@
+---
+# Give both peers the client configurations they use to play a ServiceRadar
+# poller against this fixture. Queries then carry no secret on a command line.
+- name: Create the poller client directories on both peers
+  ansible.builtin.file:
+    path: "{{ molecule_poller_dir }}/{{ item.1 }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  delegate_to: "{{ item.0 }}"
+  loop: "{{ [molecule_allowed_peer, molecule_denied_peer] | product(molecule_poller_kinds) | list }}"
+  vars:
+    molecule_poller_kinds: [right, wrong, superseded, community, wrong-community, none]
+
+- name: Write the SNMPv3 poller client configurations on both peers
+  ansible.builtin.copy:
+    content: |
+      defVersion 3
+      defSecurityName {{ molecule_v3_user }}
+      defSecurityLevel authPriv
+      defAuthType SHA-256
+      defPrivType AES
+      defAuthPassphrase {{ item.1.auth }}
+      defPrivPassphrase {{ item.1.priv }}
+    dest: "{{ molecule_poller_dir }}/{{ item.1.kind }}/snmp.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  delegate_to: "{{ item.0 }}"
+  loop: "{{ [molecule_allowed_peer, molecule_denied_peer] | product(molecule_poller_v3) | list }}"
+  vars:
+    molecule_poller_v3:
+      - kind: right
+        auth: "{{ molecule_v3_auth }}"
+        priv: "{{ molecule_v3_priv }}"
+      - kind: wrong
+        auth: "{{ molecule_v3_auth_wrong }}"
+        priv: "{{ molecule_v3_priv }}"
+      - kind: superseded
+        auth: "{{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v3-auth-initial') }}"
+        priv: "{{ lookup('ansible.builtin.file', molecule_secret_dir ~ '/snmp-v3-priv-initial') }}"
+  no_log: true
+
+- name: Write the SNMPv2c poller client configurations on both peers
+  ansible.builtin.copy:
+    content: |
+      defCommunity {{ item.1.community }}
+    dest: "{{ molecule_poller_dir }}/{{ item.1.kind }}/snmp.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  delegate_to: "{{ item.0 }}"
+  loop: "{{ [molecule_allowed_peer, molecule_denied_peer] | product(molecule_poller_v2c) | list }}"
+  vars:
+    molecule_poller_v2c:
+      - kind: community
+        community: "{{ molecule_v2c_community }}"
+      - kind: wrong-community
+        community: "{{ molecule_v2c_community_wrong }}"
+  no_log: true

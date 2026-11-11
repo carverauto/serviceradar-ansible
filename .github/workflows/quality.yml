@@ -94,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [preflight]
+        scenario: [preflight, linux_snmp_agent]
     steps:
       - name: Assert secretless GitHub-hosted runner boundary
         run: |
@@ -121,6 +121,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Record immutable source and platform provenance
+        env:
+          MOLECULE_SCENARIO: ${{ matrix.scenario }}
         run: |
           set -euo pipefail
           printf 'source_commit=%s\n' "${GITHUB_SHA}"
@@ -129,7 +131,7 @@ jobs:
             awk '/^[[:space:]]+docker\.io\/.*@sha256:[0-9a-f]+$/ {
               sub(/^[[:space:]]+/, "")
               print
-            }' molecule/preflight/molecule.yml
+            }' "molecule/${MOLECULE_SCENARIO}/molecule.yml"
           )
           test "${#platform_images[@]}" -eq 4
           printf 'platform_image=%s\n' "${platform_images[@]}"
@@ -179,7 +181,7 @@ jobs:
             echo "the unix-chkpwd AppArmor profile is still loaded" >&2
             exit 1
           fi
-      - name: Generate an ephemeral uncommitted test CA and run pinned Molecule matrix
+      - name: Run the pinned Molecule scenario with test material generated for this run only
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
           MOLECULE_SCENARIO: ${{ matrix.scenario }}

@@ -1,0 +1,99 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+# Each image is pinned by digest and used exactly as published, like the
+# preflight scenario. The fixtures stand in for managed VMs and containers:
+# every one runs the distribution systemd and the distribution snmpd.
+platforms:
+  - name: sr-snmp-ubuntu2204
+    image: >-
+      docker.io/geerlingguy/docker-ubuntu2204-ansible@sha256:114c729fe6540653b432bb8102bc760eb83a9569f95206f077ad74cb7e7361ee
+    pre_build_image: true
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-snmp-ubuntu2404
+    image: >-
+      docker.io/geerlingguy/docker-ubuntu2404-ansible@sha256:c446997f67e9f43bb427180166ce1db7ad4312f7065242456c57c937cb9cdd5b
+    pre_build_image: true
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-snmp-debian12
+    image: >-
+      docker.io/geerlingguy/docker-debian12-ansible@sha256:1b1881bfc5f025980765a90e76ecaebd61f53248eb0f3f23bc027da1b201400e
+    pre_build_image: true
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  - name: sr-snmp-rocky9
+    image: >-
+      docker.io/geerlingguy/docker-rockylinux9-ansible@sha256:12e0bf8e95037b84af695b0c4ae6a552e3100c69793ee02f95870b4e02bd22ff
+    pre_build_image: true
+    command: /sbin/init
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.collections
+  inventory:
+    # Each fixture is polled by one allowed peer and probed by one peer that
+    # is not a poller source. The source-filter layers differ per fixture so
+    # that each layer is the only one standing somewhere:
+    #   ubuntu2204  TCP wrappers only
+    #   ubuntu2404  TCP wrappers, systemd IP filter, active ufw
+    #   debian12    TCP wrappers, systemd IP filter
+    #   rocky9      systemd IP filter (no TCP wrappers in the build), active firewalld
+    host_vars:
+      sr-snmp-ubuntu2204:
+        molecule_allowed_peer: sr-snmp-ubuntu2404
+        molecule_denied_peer: sr-snmp-debian12
+        molecule_systemd_ip_filter: false
+        molecule_firewall: none
+        molecule_v3_user: srmolecule
+        molecule_remove_package: false
+      sr-snmp-ubuntu2404:
+        molecule_allowed_peer: sr-snmp-debian12
+        molecule_denied_peer: sr-snmp-rocky9
+        molecule_systemd_ip_filter: true
+        molecule_firewall: ufw
+        molecule_v3_user: sr_molecule-ro
+        molecule_remove_package: false
+      sr-snmp-debian12:
+        molecule_allowed_peer: sr-snmp-rocky9
+        molecule_denied_peer: sr-snmp-ubuntu2204
+        molecule_systemd_ip_filter: true
+        molecule_firewall: none
+        molecule_v3_user: sr.molecule
+        molecule_remove_package: true
+      sr-snmp-rocky9:
+        molecule_allowed_peer: sr-snmp-ubuntu2204
+        molecule_denied_peer: sr-snmp-ubuntu2404
+        molecule_systemd_ip_filter: true
+        molecule_firewall: firewalld
+        molecule_v3_user: srmolecule
+        molecule_remove_package: true
+verifier:
+  name: ansible
+scenario:
+  test_sequence:
+    - destroy
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

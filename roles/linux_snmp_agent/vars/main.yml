@@ -1,0 +1,249 @@
+---
+# Fixed role contract. These are not inputs; override nothing here.
+linux_snmp_agent_platforms:
+  Debian:
+    packages: [snmpd, snmp]
+    daemon_package: snmpd
+    persistent_file: /var/lib/snmp/snmpd.conf
+  RedHat:
+    packages: [net-snmp, net-snmp-utils]
+    daemon_package: net-snmp
+    persistent_file: /var/lib/net-snmp/snmpd.conf
+linux_snmp_agent_platform: "{{ linux_snmp_agent_platforms[ansible_facts.os_family] }}"
+
+linux_snmp_agent_service_name: snmpd
+linux_snmp_agent_daemon_path: /usr/sbin/snmpd
+linux_snmp_agent_snmpget_path: /usr/bin/snmpget
+linux_snmp_agent_config_path: /etc/snmp/snmpd.conf
+linux_snmp_agent_config_backup_path: /etc/snmp/snmpd.conf.pre-serviceradar
+linux_snmp_agent_dropin_dir: /etc/snmp/snmpd.conf.d
+linux_snmp_agent_state_path: /etc/snmp/serviceradar-linux-snmp-agent.json
+linux_snmp_agent_unit_dropin_dir: /etc/systemd/system/snmpd.service.d
+linux_snmp_agent_unit_dropin_path: "{{ linux_snmp_agent_unit_dropin_dir }}/50-serviceradar-source-filter.conf"
+linux_snmp_agent_wrappers_marker: "# {mark} ServiceRadar linux_snmp_agent"
+linux_snmp_agent_client_dir: /run/serviceradar-linux-snmp-agent
+linux_snmp_agent_view_name: serviceradarRo
+linux_snmp_agent_v2c_security_name: serviceradarRoSec
+linux_snmp_agent_v2c_group_name: serviceradarRoGroup
+linux_snmp_agent_system_oid: .1.3.6.1.2.1.1
+linux_snmp_agent_sysname_oid: .1.3.6.1.2.1.1.5.0
+linux_snmp_agent_v3_priv_protocol: AES
+
+# A loopback source that is never in the allow list. A query from it must go
+# unanswered when a daemon-level source filter is really enforcing.
+linux_snmp_agent_denied_probe_source: 127.0.0.2
+
+# Directives a drop-in may contain. Anything that grants access, opens a
+# transport, creates a user, or includes another file is refused.
+linux_snmp_agent_dropin_allowed_directives:
+  - disk
+  - extend
+  - extendfix
+  - file
+  - ignoredisk
+  - includealldisks
+  - interface
+  - load
+  - pass
+  - pass_persist
+  - proc
+  - procfix
+  - realstorageunits
+  - skipnfsinhostresources
+  - storageusenfs
+  - swap
+
+# Community strings that ship as vendor or documentation defaults.
+linux_snmp_agent_denied_communities:
+  - public
+  - private
+  - community
+  - snmp
+  - snmpd
+  - admin
+  - administrator
+  - manager
+  - monitor
+  - monitoring
+  - default
+  - secret
+  - password
+  - read
+  - write
+  - readonly
+  - read-only
+  - test
+  - cisco
+  - internal
+  - system
+  - security
+  - network
+  - netman
+  - router
+  - switch
+  - serviceradar
+
+linux_snmp_agent_secret_pattern: '^[A-Za-z0-9._~!@%^*+=:,/-]+$'
+linux_snmp_agent_secret_charset: "letters, digits and . _ ~ ! @ % ^ * + = : , / -"
+linux_snmp_agent_user_pattern: '^[A-Za-z][A-Za-z0-9_.-]{0,31}$'
+linux_snmp_agent_ipv4_pattern: >-
+  ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$
+linux_snmp_agent_oid_pattern: '^\.1\.3\.6\.1(\.(0|[1-9][0-9]{0,9})){2,30}$'
+linux_snmp_agent_text_pattern: '^[A-Za-z0-9][A-Za-z0-9 .,:;@_/()<>+-]{0,254}$'
+
+# One entry per poller source, separated by ";": "ok:<cidr>:<tcp wrappers
+# form>" or "bad:<position>:<reason>". A plain delimited string keeps the
+# result identical on every supported ansible-core release.
+linux_snmp_agent_source_report: >-
+  {%- for source in linux_snmp_agent_poller_sources -%}
+  {%- set octet = '(0|[1-9][0-9]{0,2})' -%}
+  {%- set parts = (source | string) | regex_findall(
+        '^' ~ octet ~ '[.]' ~ octet ~ '[.]' ~ octet ~ '[.]' ~ octet ~ '(?:/(0|[1-9][0-9]?))?$') -%}
+  {%- if parts | length != 1 -%}
+  bad:{{ loop.index }}:is not an IPv4 address or CIDR
+  {%- else -%}
+  {%- set octets = parts[0][:4] | map('int') | list -%}
+  {%- set prefix = (parts[0][4] | default('32', true)) | int -%}
+  {%- set value = octets[0] * 16777216 + octets[1] * 65536 + octets[2] * 256 + octets[3] -%}
+  {%- if (octets | max) > 255 or prefix > 32 -%}
+  bad:{{ loop.index }}:has an octet or prefix that is out of range
+  {%- elif prefix < 8 -%}
+  bad:{{ loop.index }}:is broader than /8 and would answer too many sources
+  {%- elif octets[0] in [0, 127] or octets[0] >= 224 -%}
+  bad:{{ loop.index }}:is not a unicast poller address
+  {%- elif value % (2 ** (32 - prefix)) != 0 -%}
+  bad:{{ loop.index }}:has host bits set below its prefix
+  {%- else -%}
+  {%- set mask = 4294967296 - 2 ** (32 - prefix) -%}
+  ok:{{ octets | join('.') }}/{{ prefix }}:{{ octets | join('.') -}}
+  {%- if prefix < 32 -%}
+  /{{ mask // 16777216 }}.{{ (mask // 65536) % 256 }}.{{ (mask // 256) % 256 }}.{{ mask % 256 }}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endif -%}
+  {{- '' if loop.last else ';' -}}
+  {%- endfor -%}
+linux_snmp_agent_source_entries: "{{ (linux_snmp_agent_source_report | string).split(';') | select | list }}"
+linux_snmp_agent_source_errors: >-
+  {{ linux_snmp_agent_source_entries | select('match', '^bad:')
+     | map('regex_replace', '^bad:([0-9]+):(.*)$', 'Poller source number \1 \2.') | list }}
+linux_snmp_agent_source_cidrs: >-
+  {{ linux_snmp_agent_source_entries | select('match', '^ok:')
+     | map('regex_replace', '^ok:([^:]+):(.*)$', '\1') | unique | list }}
+linux_snmp_agent_source_wrappers: >-
+  {{ linux_snmp_agent_source_entries | select('match', '^ok:')
+     | map('regex_replace', '^ok:([^:]+):(.*)$', '\2') | unique | list }}
+
+linux_snmp_agent_view_included: >-
+  {{ ([linux_snmp_agent_system_oid] + linux_snmp_agent_view_oids + linux_snmp_agent_view_extra_oids)
+     | unique | list }}
+
+# Problems with the non-secret inputs, as operator-readable sentences.
+linux_snmp_agent_input_errors: >-
+  {{
+    (['linux_snmp_agent_state must be present or absent.']
+       if linux_snmp_agent_state not in ['present', 'absent'] else [])
+    + (['linux_snmp_agent_mode must be v3 or v2c.']
+       if linux_snmp_agent_mode not in ['v3', 'v2c'] else [])
+    + (['linux_snmp_agent_v3_auth_protocol must be SHA-256, SHA-384 or SHA-512.']
+       if linux_snmp_agent_v3_auth_protocol not in ['SHA-256', 'SHA-384', 'SHA-512'] else [])
+    + (['linux_snmp_agent_firewalld_zone must be empty or a firewalld zone name.']
+       if linux_snmp_agent_firewalld_zone is not match('^[A-Za-z0-9_-]{0,17}$') else [])
+    + ((
+        (['linux_snmp_agent_poller_sources is empty. Refusing to configure an agent that would answer any source.']
+           if linux_snmp_agent_poller_sources | length == 0 else [])
+        + (['linux_snmp_agent_poller_sources has more than 64 entries.']
+           if linux_snmp_agent_poller_sources | length > 64 else [])
+        + linux_snmp_agent_source_errors
+        + (['linux_snmp_agent_bind_address must be an IPv4 address.']
+           if linux_snmp_agent_bind_address is not match(linux_snmp_agent_ipv4_pattern) else [])
+        + (['linux_snmp_agent_port must be between 1 and 65535.']
+           if (linux_snmp_agent_port | int) < 1 or (linux_snmp_agent_port | int) > 65535 else [])
+        + (['The view lists accept at most 64 numeric OIDs below .1.3.6.1, each at least six arcs long.']
+           if ((linux_snmp_agent_view_included + linux_snmp_agent_view_excluded_oids) | length > 64)
+              or ((linux_snmp_agent_view_included + linux_snmp_agent_view_excluded_oids)
+                  | reject('match', linux_snmp_agent_oid_pattern) | list | length > 0)
+           else [])
+        + (['linux_snmp_agent_sys_location may contain only letters, digits, spaces and . , : ; @ _ / ( ) < > + -']
+           if linux_snmp_agent_sys_location | length > 0
+              and linux_snmp_agent_sys_location is not match(linux_snmp_agent_text_pattern) else [])
+        + (['linux_snmp_agent_sys_contact may contain only letters, digits, spaces and . , : ; @ _ / ( ) < > + -']
+           if linux_snmp_agent_sys_contact | length > 0
+              and linux_snmp_agent_sys_contact is not match(linux_snmp_agent_text_pattern) else [])
+       ) if linux_snmp_agent_state == 'present' else [])
+  }}
+
+# Problems with the credential, described without repeating any value.
+linux_snmp_agent_secret_errors: >-
+  {{
+    ((
+      (['The SNMPv3 user name is missing or is not 1-32 characters of letters, digits, _ . - starting with a letter.']
+         if linux_snmp_agent_v3_user is not match(linux_snmp_agent_user_pattern) else [])
+      + (['The SNMPv3 authentication passphrase is missing or is not 12-64 characters of '
+          ~ linux_snmp_agent_secret_charset ~ '.']
+         if linux_snmp_agent_v3_auth_passphrase is not match(linux_snmp_agent_secret_pattern)
+            or linux_snmp_agent_v3_auth_passphrase | length < 12
+            or linux_snmp_agent_v3_auth_passphrase | length > 64 else [])
+      + (['The SNMPv3 privacy passphrase is missing or is not 12-64 characters of '
+          ~ linux_snmp_agent_secret_charset ~ '.']
+         if linux_snmp_agent_v3_priv_passphrase is not match(linux_snmp_agent_secret_pattern)
+            or linux_snmp_agent_v3_priv_passphrase | length < 12
+            or linux_snmp_agent_v3_priv_passphrase | length > 64 else [])
+      + (['The SNMPv3 authentication and privacy passphrases must differ.']
+         if linux_snmp_agent_v3_auth_passphrase | length > 0
+            and linux_snmp_agent_v3_auth_passphrase == linux_snmp_agent_v3_priv_passphrase else [])
+     ) if linux_snmp_agent_mode == 'v3' else (
+      (['SNMPv2c was requested but the credential supplies no community. There is no default community.']
+         if linux_snmp_agent_v2c_community | length == 0 else [])
+      + (['The SNMPv2c community is a well-known default value and is refused.']
+         if (linux_snmp_agent_v2c_community | lower) in linux_snmp_agent_denied_communities else [])
+      + (['The SNMPv2c community must be 16-64 characters of ' ~ linux_snmp_agent_secret_charset ~ '.']
+         if linux_snmp_agent_v2c_community | length > 0
+            and (linux_snmp_agent_v2c_community is not match(linux_snmp_agent_secret_pattern)
+                 or linux_snmp_agent_v2c_community | length < 16
+                 or linux_snmp_agent_v2c_community | length > 64) else [])
+     )) if linux_snmp_agent_state == 'present' else (
+      ['The SNMPv3 user name to remove is not a valid user name.']
+        if linux_snmp_agent_v3_user | length > 0
+           and linux_snmp_agent_v3_user is not match(linux_snmp_agent_user_pattern) else [])
+  }}
+
+# net-snmp stores a user name in quotes when it is alphanumeric and as a hex
+# string otherwise. Both forms identify the user's line in the persistent file.
+linux_snmp_agent_v3_user_hex: >-
+  {%- for character in linux_snmp_agent_v3_user | string | list -%}
+  {%- for code in range(33, 127) -%}
+  {%- if ('%c' | format(code)) == character -%}{{ '%02x' | format(code) }}{%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+linux_snmp_agent_v3_user_line_pattern: >-
+  ^usmUser\s+\S+\s+\S+\s+\S+\s+(?:"{{ linux_snmp_agent_v3_user | regex_escape }}"|0x{{
+  linux_snmp_agent_v3_user_hex }})\s
+
+# The local queries carry no secret on the command line: each reads a
+# root-only client configuration selected through SNMPCONFPATH.
+linux_snmp_agent_probe_argv:
+  - "{{ linux_snmp_agent_snmpget_path }}"
+  - -r
+  - "0"
+  - -t
+  - "3"
+  - -On
+  - "udp:127.0.0.1:{{ linux_snmp_agent_port }}"
+  - "{{ linux_snmp_agent_sysname_oid }}"
+linux_snmp_agent_probe_env:
+  allowed:
+    SNMPCONFPATH: "{{ linux_snmp_agent_client_dir }}/allowed"
+    SNMP_PERSISTENT_DIR: "{{ linux_snmp_agent_client_dir }}/state"
+    MIBS: ""
+  denied:
+    SNMPCONFPATH: "{{ linux_snmp_agent_client_dir }}/denied"
+    SNMP_PERSISTENT_DIR: "{{ linux_snmp_agent_client_dir }}/state"
+    MIBS: ""
+  anonymous:
+    SNMPCONFPATH: "{{ linux_snmp_agent_client_dir }}/anonymous"
+    SNMP_PERSISTENT_DIR: "{{ linux_snmp_agent_client_dir }}/state"
+    MIBS: ""
+
+linux_snmp_agent_firewalld_zone_argv: >-
+  {{ ['--zone=' ~ linux_snmp_agent_firewalld_zone] if linux_snmp_agent_firewalld_zone | length > 0 else [] }}

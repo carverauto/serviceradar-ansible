@@ -1,0 +1,64 @@
+---
+# present installs and configures snmpd; absent removes everything this role
+# manages and leaves the agent stopped and disabled.
+linux_snmp_agent_state: present
+
+# v3 (authPriv, the default) or v2c (explicit opt-in, read-only, never a
+# default community). Only one mode is configured at a time.
+linux_snmp_agent_mode: v3
+
+# Secrets. They come from the AWX custom credential published under
+# awx/credential-types/linux-snmp-agent/v1/, which injects these environment
+# variables into the job. Never set them in the repository, an inventory, a
+# survey, or job-template extra variables.
+linux_snmp_agent_v3_user: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_SNMP_V3_USER') }}"
+linux_snmp_agent_v3_auth_passphrase: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_SNMP_V3_AUTH_PASSPHRASE') }}"
+linux_snmp_agent_v3_priv_passphrase: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_SNMP_V3_PRIV_PASSPHRASE') }}"
+linux_snmp_agent_v2c_community: "{{ lookup('ansible.builtin.env', 'SERVICERADAR_SNMP_V2C_COMMUNITY') }}"
+
+# SNMPv3 authentication protocol. Privacy is always AES (AES-128, RFC 3826).
+linux_snmp_agent_v3_auth_protocol: SHA-256
+
+# linux_snmp_agent_poller_sources is required and has no default: the IPv4
+# addresses or CIDRs (prefix /8 or longer) of the ServiceRadar agents that
+# poll this host, for example ["192.0.2.10", "198.51.100.0/24"].
+
+# The agent always listens on 127.0.0.1 so the role can verify it. 0.0.0.0
+# listens on every IPv4 address; any other value adds that one address.
+linux_snmp_agent_bind_address: 0.0.0.0
+linux_snmp_agent_port: 161
+
+# Read-only view. The system group is always included because the role
+# verifies the agent by reading sysName.
+linux_snmp_agent_view_oids:
+  - .1.3.6.1.2.1.1       # system
+  - .1.3.6.1.2.1.2       # interfaces
+  - .1.3.6.1.2.1.31      # ifMIB (ifXTable, 64-bit counters)
+  - .1.3.6.1.2.1.25      # host resources
+  - .1.3.6.1.4.1.2021    # UCD-SNMP (load, memory, disk)
+linux_snmp_agent_view_extra_oids: []
+# Process command lines can carry secrets, so hrSWRunParameters stays hidden.
+linux_snmp_agent_view_excluded_oids:
+  - .1.3.6.1.2.1.25.4.2.1.5
+
+# Optional sysLocation and sysContact. Empty leaves the agent default.
+linux_snmp_agent_sys_location: ""
+linux_snmp_agent_sys_contact: ""
+
+# Include /etc/snmp/snmpd.conf.d/*.conf. The role refuses any drop-in that
+# contains a directive outside the monitoring-extension allowlist.
+linux_snmp_agent_include_dropin_dir: false
+
+# Enforce the poller sources with a systemd IPAddressAllow/IPAddressDeny
+# drop-in for snmpd.service.
+linux_snmp_agent_systemd_ip_filter: true
+
+# Open the agent port for the poller sources in firewalld or ufw when one of
+# them is already active. The role never installs or enables a firewall.
+linux_snmp_agent_manage_firewall: true
+# firewalld zone for the rules. Empty uses the default zone.
+linux_snmp_agent_firewalld_zone: ""
+
+# With state absent, also remove the distribution agent package and its
+# persistent SNMPv3 user store.
+linux_snmp_agent_remove_package: false

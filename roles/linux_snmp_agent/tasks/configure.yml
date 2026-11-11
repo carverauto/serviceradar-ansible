@@ -1,0 +1,84 @@
+---
+- name: Check for an existing agent configuration
+  ansible.builtin.stat:
+    path: "{{ linux_snmp_agent_config_path }}"
+  register: linux_snmp_agent_existing_config
+
+# The distribution or operator file may contain community strings, so the
+# copy stays root-only and is never shown as a diff.
+- name: Keep one root-only copy of the configuration found before the first run
+  ansible.builtin.copy:
+    src: "{{ linux_snmp_agent_config_path }}"
+    dest: "{{ linux_snmp_agent_config_backup_path }}"
+    remote_src: true
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+  when:
+    - not linux_snmp_agent_state_file.stat.exists
+    - linux_snmp_agent_existing_config.stat.exists
+
+- name: Validate the optional drop-in directory
+  when: linux_snmp_agent_include_dropin_dir
+  block:
+    - name: Ensure the drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ linux_snmp_agent_dropin_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Find the drop-in files the agent would read
+      ansible.builtin.find:
+        paths: "{{ linux_snmp_agent_dropin_dir }}"
+        patterns: "*.conf"
+        file_type: any
+      register: linux_snmp_agent_dropin_files
+
+    - name: Read the drop-in files without logging them
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop: "{{ linux_snmp_agent_dropin_files.files | map(attribute='path') | sort }}"
+      register: linux_snmp_agent_dropin_contents
+      no_log: true
+
+    - name: Refuse drop-ins that could grant access or open a transport
+      ansible.builtin.assert:
+        that:
+          - linux_snmp_agent_dropin_violations | trim | length == 0
+        fail_msg: >-
+          Drop-ins in {{ linux_snmp_agent_dropin_dir }} may contain only the
+          directives {{ linux_snmp_agent_dropin_allowed_directives | join(', ') }}.
+          Refused: {{ linux_snmp_agent_dropin_violations | trim }}
+      vars:
+        linux_snmp_agent_dropin_violations: >-
+          {%- for result in linux_snmp_agent_dropin_contents.results -%}
+          {%- for line in (result.content | b64decode).splitlines() -%}
+          {%- set directive = (line | trim).split() | first | default('') | lower -%}
+          {%- if directive | length > 0 and not directive.startswith('#')
+                and directive not in linux_snmp_agent_dropin_allowed_directives -%}
+          {{ result.source }} line {{ loop.index }};{{ ' ' }}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- endfor -%}
+
+# snmpd has no syntax-check mode that exits non-zero. "-H" parses only the
+# candidate ("-C -c") and reports each problem as "<file>: line <n>: Error" or
+# "Warning", so a match fails the validation and the live file is untouched.
+- name: Render the agent configuration and validate it before it is installed
+  ansible.builtin.template:
+    src: snmpd.conf.j2
+    dest: "{{ linux_snmp_agent_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: >-
+      /bin/sh -c '! {{ linux_snmp_agent_daemon_path }} -Le -C -c "$0" -H 2>&1
+      | grep -Eq ": line [0-9]+: (Error|Warning)"' %s
+  diff: false
+  no_log: true
+  notify: Restart snmpd

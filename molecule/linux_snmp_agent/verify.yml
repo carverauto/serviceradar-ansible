@@ -1,0 +1,679 @@
+---
+- name: Prove the converged SNMPv3 agent from allowed and non-allowed peers
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  tasks:
+    - name: Give the peers their poller client configurations
+      ansible.builtin.include_tasks: tasks/poller_clients.yml
+
+    - name: Poll the converged agent
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads sysName with the right SNMPv3 credential
+          from: allowed
+          client: right
+          expect: answer
+        - case: the allowed poller is refused with a wrong SNMPv3 passphrase
+          from: allowed
+          client: wrong
+          expect: authentication failure
+        - case: a non-allowed source gets no answer even with the right SNMPv3 credential
+          from: denied
+          client: right
+          expect: timeout
+        - case: the allowed poller gets no answer for the well-known community
+          from: allowed
+          client: none
+          options: [-v2c, -c, public]
+          expect: timeout
+        - case: the allowed poller gets no answer over SNMPv1
+          from: allowed
+          client: none
+          options: [-v1, -c, public]
+          expect: timeout
+        - case: the default view exposes the interfaces group
+          from: allowed
+          client: right
+          oid: .1.3.6.1.2.1.2.1.0
+          expect: answer
+        - case: the default view exposes the configured sysLocation
+          from: allowed
+          client: right
+          oid: .1.3.6.1.2.1.1.6.0
+          expect: answer
+        - case: the default view hides process command lines
+          from: allowed
+          client: right
+          oid: .1.3.6.1.2.1.25.4.2.1.5.1
+          expect: not in view
+        - case: the default view hides the SNMP engine and user tables
+          from: allowed
+          client: right
+          oid: .1.3.6.1.6.3.10.2.1.1.0
+          expect: not in view
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+    - name: Read the managed configuration files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/snmp/snmpd.conf
+        - /etc/snmp/serviceradar-linux-snmp-agent.json
+        - /etc/snmp/snmpd.conf.pre-serviceradar
+      register: molecule_managed_files
+
+    - name: Require root-only managed files
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.pw_name == 'root'
+          - item.stat.mode == '0600'
+        fail_msg: "{{ item.item }} is missing or is not a root-only 0600 file."
+      loop: "{{ molecule_managed_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read the snmpd journal
+      ansible.builtin.command:
+        argv: [journalctl, --unit, snmpd, --no-pager, --output, cat]
+      register: molecule_snmpd_journal
+      changed_when: false
+      no_log: true
+
+    - name: Read every file the role or the agent wrote
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          shopt -s nullglob
+          cat /etc/snmp/snmpd.conf /etc/snmp/serviceradar-linux-snmp-agent.json \
+            /var/lib/snmp/snmpd.conf /var/lib/net-snmp/snmpd.conf \
+            /etc/systemd/system/snmpd.service.d/*.conf /etc/hosts.allow /etc/hosts.deny 2>/dev/null || true
+      register: molecule_written_files
+      changed_when: false
+      no_log: true
+
+    # The conditions are evaluated with no_log so a failure cannot print the
+    # throwaway credential either; the next task reports which rule failed.
+    - name: Look for the SNMPv3 passphrases at rest and in the journal
+      ansible.builtin.set_fact:
+        molecule_secret_findings: >-
+          {{ (['an SNMPv3 passphrase is stored on disk']
+              if molecule_v3_auth in molecule_written_files.stdout
+                 or molecule_v3_priv in molecule_written_files.stdout else [])
+             + (['an SNMPv3 passphrase reached the snmpd journal']
+                if molecule_v3_auth in molecule_snmpd_journal.stdout
+                   or molecule_v3_priv in molecule_snmpd_journal.stdout else [])
+             + (['the persistent store still holds a plaintext createUser line']
+                if molecule_written_files.stdout is search('(?m)^createUser') else [])
+             + (['the persistent store holds no keyed usmUser for the SNMPv3 user']
+                if molecule_written_files.stdout is not search('(?m)^usmUser ') else [])
+             + (['the files the scan read do not include the managed configuration']
+                if 'Managed by the ServiceRadar Ansible role linux_snmp_agent' not in molecule_written_files.stdout
+                else []) }}
+      no_log: true
+
+    - name: Require that no SNMPv3 passphrase is stored or logged
+      ansible.builtin.assert:
+        that:
+          - molecule_secret_findings | length == 0
+        fail_msg: "{{ molecule_secret_findings | join('; ') }}"
+
+    - name: Check that the temporary client configuration is gone
+      ansible.builtin.stat:
+        path: /run/serviceradar-linux-snmp-agent
+      register: molecule_client_dir
+      failed_when: molecule_client_dir.stat.exists
+
+    - name: Read the agent service state
+      ansible.builtin.systemd_service:
+        name: snmpd
+      register: molecule_snmpd_unit
+      failed_when: >-
+        molecule_snmpd_unit.status.ActiveState != 'active'
+        or molecule_snmpd_unit.status.UnitFileState != 'enabled'
+
+    - name: Read the ufw rules
+      ansible.builtin.command:
+        argv: [ufw, status]
+      register: molecule_ufw_rules
+      changed_when: false
+      failed_when: >-
+        molecule_ufw_rules.rc != 0
+        or molecule_ufw_rules.stdout_lines | select('search', '161/udp') | list | length
+           != molecule_poller_sources | length
+        or molecule_poller_sources | map('regex_replace', '/32$', '')
+           | reject('in', molecule_ufw_rules.stdout) | list | length > 0
+        or 'Anywhere' in molecule_ufw_rules.stdout
+      when: molecule_firewall == 'ufw'
+
+    - name: Read the firewalld rules
+      ansible.builtin.command:
+        argv: "{{ ['firewall-cmd'] + item + ['--list-rich-rules'] }}"
+      loop: [[], [--permanent]]
+      register: molecule_firewalld_rules
+      changed_when: false
+      failed_when: >-
+        molecule_firewalld_rules.rc != 0
+        or molecule_firewalld_rules.stdout_lines | length != molecule_poller_sources | length
+        or molecule_firewalld_rules.stdout_lines
+           | reject('search', 'port="161" protocol="udp" accept$') | list | length > 0
+        or molecule_poller_sources | reject('in', molecule_firewalld_rules.stdout) | list | length > 0
+      when: molecule_firewall == 'firewalld'
+
+    - name: Check that firewalld does not open the agent port to every source
+      ansible.builtin.command:
+        argv: [firewall-cmd, --list-all]
+      register: molecule_firewalld_zone
+      changed_when: false
+      failed_when: >-
+        molecule_firewalld_zone.stdout is search('(?m)^\s*ports:.*161')
+        or molecule_firewalld_zone.stdout is search('(?m)^\s*services:.*snmp')
+      when: molecule_firewall == 'firewalld'
+
+- name: Prove that a passphrase rotation replaces the SNMPv3 user
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+  tasks:
+    - name: Apply the rotated credential
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+
+    - name: Give the peers the rotated poller client configurations
+      ansible.builtin.include_tasks: tasks/poller_clients.yml
+
+    - name: Poll the agent after the rotation
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads sysName with the rotated credential
+          from: allowed
+          client: right
+          expect: answer
+        - case: the allowed poller is refused with the superseded credential
+          from: allowed
+          client: superseded
+          expect: authentication failure
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+    - name: Count the keyed entries for SNMPv3 users
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          shopt -s nullglob
+          cat /var/lib/snmp/snmpd.conf /var/lib/net-snmp/snmpd.conf 2>/dev/null | grep -c '^usmUser ' || true
+      register: molecule_usm_users
+      changed_when: false
+      failed_when: molecule_usm_users.stdout | trim != '1'
+
+- name: Prove the explicit SNMPv2c mode and the return to SNMPv3
+  hosts: sr-snmp-ubuntu2204:sr-snmp-rocky9
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+  tasks:
+    - name: Opt in to SNMPv2c with a generated community
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_mode: v2c
+        linux_snmp_agent_v2c_community: "{{ molecule_v2c_community }}"
+
+    - name: Read the SNMPv2c configuration
+      ansible.builtin.slurp:
+        src: /etc/snmp/snmpd.conf
+      register: molecule_v2c_config
+      no_log: true
+
+    - name: Look for an access rule that is not bound to a listed source
+      ansible.builtin.set_fact:
+        molecule_v2c_findings: >-
+          {{ (['the configuration grants access with a rocommunity or rwcommunity shortcut']
+              if molecule_v2c_text is search('(?im)^\s*r[ow]community') else [])
+             + (['the configuration maps the default source']
+                if molecule_v2c_text is search('(?im)^\s*com2sec\S*\s+\S+\s+default\b') else [])
+             + (['the configuration maps a source other than loopback and the poller sources']
+                if molecule_v2c_text | regex_findall('(?m)^com2sec\s+\S+\s+(\S+)\s') | sort
+                   != (['127.0.0.1'] + molecule_poller_sources | map('regex_replace', '^([^/]+)$', '\1/32') | list)
+                      | sort else [])
+             + (['the configuration grants SNMPv1 or write access']
+                if molecule_v2c_text | regex_findall('(?m)^(?:group|access)\s.*$') | sort
+                   != ['access serviceradarRoGroup "" v2c noauth exact serviceradarRo none none',
+                       'group serviceradarRoGroup v2c serviceradarRoSec'] else []) }}
+      vars:
+        molecule_v2c_text: "{{ molecule_v2c_config.content | b64decode }}"
+      no_log: true
+
+    - name: Require source-bound, read-only SNMPv2c access rules
+      ansible.builtin.assert:
+        that:
+          - molecule_v2c_findings | length == 0
+        fail_msg: "{{ molecule_v2c_findings | join('; ') }}"
+
+    - name: Poll the SNMPv2c agent
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads sysName with the SNMPv2c community
+          from: allowed
+          client: community
+          options: [-v2c]
+          expect: answer
+        - case: the allowed poller gets no answer for a wrong community
+          from: allowed
+          client: wrong-community
+          options: [-v2c]
+          expect: timeout
+        - case: the allowed poller gets no answer for the well-known community in SNMPv2c mode
+          from: allowed
+          client: none
+          options: [-v2c, -c, public]
+          expect: timeout
+        - case: the allowed poller gets no answer over SNMPv1 with the right community
+          from: allowed
+          client: community
+          options: [-v1]
+          expect: timeout
+        - case: a non-allowed source gets no answer even with the right community
+          from: denied
+          client: community
+          options: [-v2c]
+          expect: timeout
+        - case: the SNMPv3 user has no access in SNMPv2c mode
+          from: allowed
+          client: right
+          expect: authorization failure
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+    - name: Return to the default SNMPv3 mode
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+
+    - name: Poll the agent after the return to SNMPv3
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads sysName over SNMPv3 again
+          from: allowed
+          client: right
+          expect: answer
+        - case: the SNMPv2c community no longer gets an answer
+          from: allowed
+          client: community
+          options: [-v2c]
+          expect: timeout
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+- name: Prove the refusals leave the converged agent untouched
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+    molecule_input_rule: Reject invalid non-secret inputs
+    molecule_credential_rule: Reject an invalid or missing credential
+  tasks:
+    - name: Fingerprint the configuration before the refused runs
+      ansible.builtin.stat:
+        path: /etc/snmp/snmpd.conf
+        checksum_algorithm: sha256
+      register: molecule_config_before
+
+    - name: Refuse each unsafe input
+      ansible.builtin.include_tasks: tasks/expect_rejection.yml
+      loop:
+        - case: no poller sources
+          sources: []
+          task: "{{ molecule_input_rule }}"
+          message: Refusing to configure an agent that would answer any source
+        - case: every source as one CIDR
+          sources: [0.0.0.0/0]
+          task: "{{ molecule_input_rule }}"
+          message: is broader than /8 and would answer too many sources
+        - case: every source as two halves
+          sources: [0.0.0.0/1, 128.0.0.0/1]
+          task: "{{ molecule_input_rule }}"
+          message: is broader than /8 and would answer too many sources
+        - case: a source that is not an address
+          sources: [default]
+          task: "{{ molecule_input_rule }}"
+          message: is not an IPv4 address or CIDR
+        - case: the default community public
+          mode: v2c
+          community: public
+          task: "{{ molecule_credential_rule }}"
+          message: is a well-known default value and is refused
+        - case: the default community private in another letter case
+          mode: v2c
+          community: Private
+          task: "{{ molecule_credential_rule }}"
+          message: is a well-known default value and is refused
+        - case: SNMPv2c without a community
+          mode: v2c
+          task: "{{ molecule_credential_rule }}"
+          message: There is no default community
+        - case: a short SNMPv2c community
+          mode: v2c
+          community: Short-0nly-12
+          task: "{{ molecule_credential_rule }}"
+          message: The SNMPv2c community must be 16-64 characters
+        - case: SNMPv3 with a short authentication passphrase
+          auth: Too-sh0rt
+          task: "{{ molecule_credential_rule }}"
+          message: The SNMPv3 authentication passphrase is missing or is not 12-64 characters
+        - case: SNMPv3 without an authentication passphrase
+          auth: ""
+          task: "{{ molecule_credential_rule }}"
+          message: The SNMPv3 authentication passphrase is missing or is not 12-64 characters
+      loop_control:
+        loop_var: rejection
+        label: "{{ rejection.case }}"
+
+    - name: Fingerprint the configuration after the refused runs
+      ansible.builtin.stat:
+        path: /etc/snmp/snmpd.conf
+        checksum_algorithm: sha256
+      register: molecule_config_after
+      failed_when: molecule_config_after.stat.checksum != molecule_config_before.stat.checksum
+
+    - name: Poll the agent after the refused runs
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller still reads sysName after the refused runs
+          from: allowed
+          client: right
+          expect: answer
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+- name: Prove the firewall-only path and the fail-closed path without any source filter
+  hosts: sr-snmp-rocky9
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+  tasks:
+    # This snmpd build has no TCP wrappers. Without the systemd IP filter the
+    # only thing between a non-allowed peer and the agent is firewalld.
+    - name: Converge with firewalld as the only source filter
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_systemd_ip_filter: false
+
+    - name: Poll the agent behind firewalld alone
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller passes firewalld
+          from: allowed
+          client: right
+          expect: answer
+        - case: firewalld alone drops a non-allowed source
+          from: denied
+          client: right
+          expect: timeout
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+    - name: Stop firewalld to leave the fixture without any source filter
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: stopped
+
+    - name: Refuse to leave an agent running that answers any source
+      ansible.builtin.include_tasks: tasks/expect_rejection.yml
+      vars:
+        rejection:
+          case: no TCP wrappers, no systemd IP filter and no active firewall
+          systemd_ip_filter: false
+          task: Require an enforcing source filter
+          message: which is not a poller source, and no managed host firewall is active
+
+    - name: Require the unrestricted agent to be stopped and disabled
+      ansible.builtin.systemd_service:
+        name: snmpd
+      register: molecule_snmpd_unit
+      failed_when: >-
+        molecule_snmpd_unit.status.ActiveState == 'active'
+        or molecule_snmpd_unit.status.UnitFileState == 'enabled'
+
+    - name: Start firewalld again
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: started
+
+    - name: Converge the default source filters again
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+
+    - name: Poll the restored agent
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads sysName from the restored agent
+          from: allowed
+          client: right
+          expect: answer
+        - case: a non-allowed source gets no answer from the restored agent
+          from: denied
+          client: right
+          expect: timeout
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+- name: Prove that a removed poller source loses its firewall rule
+  hosts: sr-snmp-ubuntu2404:sr-snmp-rocky9
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+    molecule_extra_sources: [192.0.2.0/24]
+  tasks:
+    - name: Converge with one poller source fewer
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+
+    - name: Read the remaining firewall rules
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop: >-
+        {{ [['ufw', 'status']] if molecule_firewall == 'ufw'
+           else [['firewall-cmd', '--list-rich-rules'], ['firewall-cmd', '--permanent', '--list-rich-rules']] }}
+      register: molecule_remaining_rules
+      changed_when: false
+      failed_when: >-
+        '198.51.100.7' in molecule_remaining_rules.stdout
+        or '192.0.2.0/24' not in molecule_remaining_rules.stdout
+        or hostvars[molecule_allowed_peer].ansible_facts.default_ipv4.address
+           not in molecule_remaining_rules.stdout
+
+- name: Prove the drop-in allowlist and a specific bind address
+  hosts: sr-snmp-debian12
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+  tasks:
+    - name: Add a drop-in that would open the agent to every source
+      ansible.builtin.copy:
+        content: |
+          # An unmanaged drop-in.
+          extend uptime /usr/bin/uptime
+            rocommunity public default
+        dest: /etc/snmp/snmpd.conf.d/molecule.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Refuse to include a drop-in that grants access
+      ansible.builtin.include_tasks: tasks/expect_rejection.yml
+      vars:
+        rejection:
+          case: a drop-in that grants access
+          include_dropin_dir: true
+          task: Refuse drop-ins that could grant access or open a transport
+          message: /etc/snmp/snmpd.conf.d/molecule.conf line 3
+
+    - name: Reduce the drop-in to a monitoring extension
+      ansible.builtin.copy:
+        content: |
+          # An unmanaged drop-in.
+          extend uptime /usr/bin/uptime
+        dest: /etc/snmp/snmpd.conf.d/molecule.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Include the monitoring drop-in and bind one address besides loopback
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_include_dropin_dir: true
+        linux_snmp_agent_bind_address: "{{ molecule_target_address }}"
+        linux_snmp_agent_view_extra_oids: [.1.3.6.1.4.1.8072.1.3]
+
+    - name: Poll the agent with the drop-in
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller reads the drop-in extension through the extended view
+          from: allowed
+          client: right
+          oid: .1.3.6.1.4.1.8072.1.3.2.1.0
+          expect: answer
+        - case: a non-allowed source still gets no answer with the drop-in included
+          from: denied
+          client: right
+          expect: timeout
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
+
+    - name: Remove the drop-in
+      ansible.builtin.file:
+        path: /etc/snmp/snmpd.conf.d/molecule.conf
+        state: absent
+
+    - name: Return to the default configuration
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+
+- name: Prove that state absent removes everything the role manages
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/role_inputs.yml
+  vars:
+    molecule_credential_generation: rotated
+  tasks:
+    - name: Remove the agent configuration
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_state: absent
+        linux_snmp_agent_remove_package: "{{ molecule_remove_package }}"
+
+    - name: Remove the agent configuration a second time
+      ansible.builtin.include_role:
+        name: linux_snmp_agent
+      vars:
+        linux_snmp_agent_state: absent
+        linux_snmp_agent_remove_package: "{{ molecule_remove_package }}"
+
+    - name: Check that every role-owned path is gone
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/snmp/serviceradar-linux-snmp-agent.json
+        - /etc/snmp/snmpd.conf.pre-serviceradar
+        - /etc/systemd/system/snmpd.service.d/50-serviceradar-source-filter.conf
+        - /run/serviceradar-linux-snmp-agent
+      register: molecule_removed_paths
+      failed_when: molecule_removed_paths.stat.exists
+
+    - name: Read what is left of the agent and wrapper configuration
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          cat /etc/snmp/snmpd.conf /var/lib/snmp/snmpd.conf /var/lib/net-snmp/snmpd.conf \
+            /etc/hosts.allow /etc/hosts.deny 2>/dev/null || true
+      register: molecule_leftovers
+      changed_when: false
+      failed_when: >-
+        'ServiceRadar' in molecule_leftovers.stdout
+        or molecule_leftovers.stdout is search('(?m)^snmpd:')
+        or molecule_leftovers.stdout is search('(?m)^usmUser ')
+        or molecule_leftovers.stdout is search('(?m)^createUser')
+
+    - name: Check whether the agent package is still installed
+      ansible.builtin.stat:
+        path: /usr/sbin/snmpd
+      register: molecule_daemon
+      failed_when: molecule_daemon.stat.exists == molecule_remove_package
+
+    - name: Require the distribution configuration to be back where the package was kept
+      ansible.builtin.command:
+        argv: [grep, -c, -E, "^(rocommunity|com2sec)", /etc/snmp/snmpd.conf]
+      register: molecule_restored_config
+      changed_when: false
+      failed_when: molecule_restored_config.rc != 0
+      when: not molecule_remove_package
+
+    - name: Require the kept agent to be stopped and disabled
+      ansible.builtin.systemd_service:
+        name: snmpd
+      register: molecule_snmpd_unit
+      failed_when: >-
+        molecule_snmpd_unit.status.ActiveState == 'active'
+        or molecule_snmpd_unit.status.UnitFileState == 'enabled'
+      when: not molecule_remove_package
+
+    - name: Read the firewall rules after removal
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop: >-
+        {{ [['ufw', 'status']] if molecule_firewall == 'ufw'
+           else [['firewall-cmd', '--list-rich-rules'], ['firewall-cmd', '--permanent', '--list-rich-rules']] }}
+      register: molecule_rules_after_removal
+      changed_when: false
+      failed_when: molecule_rules_after_removal.rc != 0 or '161' in molecule_rules_after_removal.stdout
+      when: molecule_firewall != 'none'
+
+    - name: Poll the removed agent
+      ansible.builtin.include_tasks: tasks/poll.yml
+      loop:
+        - case: the allowed poller gets no answer after removal
+          from: allowed
+          client: right
+          expect: timeout
+      loop_control:
+        loop_var: molecule_case
+        label: "{{ molecule_case.case }}"
